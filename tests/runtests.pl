@@ -88,6 +88,7 @@ use serverhelp qw(
     server_exe
     );
 use pathhelp qw(
+    exe_ext
     sys_native_current_path
     );
 use processhelp qw(
@@ -122,6 +123,7 @@ my $TESTCASES="all";
 
 my $libtool;
 my $repeat = 0;
+my $retry = 0;
 
 my $start;          # time at which testing started
 my $args;           # command-line arguments
@@ -160,7 +162,6 @@ my $globalabort; # flag signalling program abort
 # values for $singletest_state
 use constant {
     ST_INIT => 0,
-    ST_CLEARLOCKS => 1,
     ST_INITED => 2,
     ST_PREPROCESS => 3,
     ST_RUN => 4,
@@ -179,7 +180,6 @@ my %runnersrunning;    # tests currently running by runner ID
 my $short;
 my $no_debuginfod;
 my $keepoutfiles; # keep stdout and stderr files after tests
-my $clearlocks;   # force removal of files by killing locking processes
 my $postmortem;   # display detailed info about failed tests
 my $run_disabled; # run the specific tests even if listed in DISABLED
 my $scrambleorder;
@@ -416,6 +416,9 @@ sub showdiff {
 
     if(!$out[0]) {
         @out = `diff -c $file2 $file1 2>$dev_null`;
+        if(!$out[0]) {
+            logmsg "Failed to show diff. The diff tool may be missing.\n";
+        }
     }
 
     return @out;
@@ -474,6 +477,9 @@ sub parseprotocols {
     # 'http-proxy' is used in test cases to do CONNECT through
     push @protocols, 'http-proxy';
 
+    # 'https-mtls' is used for client certificate auth testing
+    push @protocols, 'https-mtls';
+
     # 'none' is used in test cases to mean no server
     push @protocols, 'none';
 }
@@ -496,7 +502,7 @@ sub checksystemfeatures {
 
     my $curlverout="$LOGDIR/curlverout.log";
     my $curlvererr="$LOGDIR/curlvererr.log";
-    my $versioncmd=shell_quote($CURL) . " --version 1>$curlverout 2>$curlvererr";
+    my $versioncmd=exerunner() . shell_quote($CURL) . " --version 1>$curlverout 2>$curlvererr";
 
     unlink($curlverout);
     unlink($curlvererr);
@@ -512,8 +518,14 @@ sub checksystemfeatures {
     @version = <$versout>;
     close($versout);
 
-    open(my $disabledh, "-|", server_exe('disabled', 'TOOL'));
-    @disabled = <$disabledh>;
+    open(my $disabledh, "-|", exerunner() . shell_quote($CURLINFO));
+    while(<$disabledh>) {
+        if($_ =~ /([^:]*): ([ONF]*)/) {
+            my ($val, $toggle) = ($1, $2);
+            push @disabled, $val if($toggle eq "OFF");
+            $feature{$val} = 1 if($toggle eq "ON");
+        }
+    }
     close($disabledh);
 
     if($disabled[0]) {
@@ -537,7 +549,7 @@ sub checksystemfeatures {
                 # system support LD_PRELOAD; may be disabled later
                 $feature{"ld_preload"} = 1;
             }
-            if($curl =~ /win32|Windows|mingw(32|64)/) {
+            if($curl =~ /win32|Windows|windows|mingw(32|64)/) {
                 # This is a Windows MinGW build or native build, we need to use
                 # Windows-style path.
                 $pwd = sys_native_current_path();
@@ -704,6 +716,7 @@ sub checksystemfeatures {
             # Thread-safe init
             $feature{"threadsafe"} = $feat =~ /threadsafe/i;
             $feature{"HTTPSRR"} = $feat =~ /HTTPSRR/;
+            $feature{"ECH"} = $feat =~ /ECH/;
         }
         #
         # Test harness currently uses a non-stunnel server in order to
@@ -802,32 +815,12 @@ sub checksystemfeatures {
     }
     close($manh);
 
-    $feature{"unittest"} = $feature{"Debug"};
+    $feature{"unittest"} = 1;
     $feature{"nghttpx"} = !!$ENV{'NGHTTPX'};
     $feature{"nghttpx-h3"} = !!$nghttpx_h3;
 
-    #
-    # strings that must exactly match the names used in server/disabled.c
-    #
-    $feature{"cookies"} = 1;
     # Use this as a proxy for any cryptographic authentication
     $feature{"crypto"} = $feature{"NTLM"} || $feature{"Kerberos"} || $feature{"SPNEGO"};
-    $feature{"DoH"} = 1;
-    $feature{"HTTP-auth"} = 1;
-    $feature{"Mime"} = 1;
-    $feature{"form-api"} = 1;
-    $feature{"netrc"} = 1;
-    $feature{"parsedate"} = 1;
-    $feature{"proxy"} = 1;
-    $feature{"shuffle-dns"} = 1;
-    $feature{"typecheck"} = 1;
-    $feature{"verbose-strings"} = 1;
-    $feature{"wakeup"} = 1;
-    $feature{"headers-api"} = 1;
-    $feature{"xattr"} = 1;
-    $feature{"large-time"} = 1;
-    $feature{"large-size"} = 1;
-    $feature{"sha512-256"} = 1;
     $feature{"local-http"} = servers::localhttp();
     $feature{"codeset-utf8"} = lc(langinfo(CODESET())) eq "utf-8";
 
@@ -852,6 +845,14 @@ sub checksystemfeatures {
     chomp $hosttype;
     my $hostos=$^O;
 
+    my $havediff;
+    if(system("diff $TESTDIR/DISABLED $TESTDIR/DISABLED 2>$dev_null") == 0) {
+      $havediff = 'available';
+    }
+    else {
+      $havediff = 'missing';
+    }
+
     # display summary information about curl and the test host
     logmsg ("********* System characteristics ******** \n",
             "* $curl\n",
@@ -863,6 +864,7 @@ sub checksystemfeatures {
             "* System: $hosttype\n",
             "* OS: $hostos\n",
             "* Perl: $^V ($^X)\n",
+            "* diff: $havediff\n",
             "* Args: $args\n");
 
     if($jobs) {
@@ -886,10 +888,6 @@ sub checksystemfeatures {
     # Disable memory tracking when using threaded resolver
     $feature{"TrackMemory"} = $feature{"TrackMemory"} && !$feature{"threaded-resolver"};
 
-    # toggle off the features that were disabled in the build
-    for my $d(@disabled) {
-        $feature{$d} = 0;
-    }
 }
 
 #######################################################################
@@ -1130,24 +1128,39 @@ sub singletest_shouldrun {
         if(!$info_keywords[0]) {
             $why = "missing the <keywords> section!";
         }
+        # Only evaluate keywords if the section is present.
+        else {
+            # Prefix features with "feat:" and add to keywords list.
+            push @info_keywords, map { "feat:" . lc($_) } getpart("client", "features");
 
-        my $match;
-        for my $k (@info_keywords) {
-            chomp $k;
-            if ($disabled_keywords{lc($k)}) {
-                $why = "disabled by keyword";
+            my $match;
+            for my $k (@info_keywords) {
+                chomp $k;
+                if ($disabled_keywords{lc($k)}) {
+                    if ($k =~ /^feat:/) {
+                        $why = "disabled by feature";
+                    }
+                    else {
+                        $why = "disabled by keyword";
+                    }
+                }
+                elsif ($enabled_keywords{lc($k)}) {
+                    $match = 1;
+                }
+                if ($ignored_keywords{lc($k)}) {
+                    logmsg "Warning: test$testnum result is ignored due to $k\n";
+                    $errorreturncode = 2;
+                }
             }
-            elsif ($enabled_keywords{lc($k)}) {
-                $match = 1;
-            }
-            if ($ignored_keywords{lc($k)}) {
-                logmsg "Warning: test$testnum result is ignored due to $k\n";
-                $errorreturncode = 2;
-            }
-        }
 
-        if(!$why && !$match && %enabled_keywords) {
-            $why = "disabled by missing keyword";
+            if(!$why && !$match && %enabled_keywords) {
+                if (grep { /^feat:/ } keys %enabled_keywords) {
+                    $why = "disabled by missing feature";
+                }
+                else {
+                    $why = "disabled by missing keyword";
+                }
+            }
         }
     }
 
@@ -1837,33 +1850,13 @@ sub singletest {
     if($singletest_state{$runnerid} == ST_INIT) {
         my $logdir = getrunnerlogdir($runnerid);
         # first, remove all lingering log & lock files
-        if((!cleardir($logdir) || !cleardir("$logdir/$LOCKDIR"))
-            && $clearlocks) {
-            # On Windows, lock files can't be deleted when the process still
-            # has them open, so kill those processes first
-            if(runnerac_clearlocks($runnerid, "$logdir/$LOCKDIR")) {
-                logmsg "ERROR: runner $runnerid seems to have died\n";
-                $singletest_state{$runnerid} = ST_INIT;
-                return (-1, 0);
-            }
-            $singletest_state{$runnerid} = ST_CLEARLOCKS;
-        } else {
-            $singletest_state{$runnerid} = ST_INITED;
-            # Recursively call the state machine again because there is no
-            # event expected that would otherwise trigger a new call.
-            return singletest(@_);
+        if(!cleardir($logdir)) {
+            logmsg "Warning: $runnerid: cleardir($logdir) failed\n";
+        }
+        if(!cleardir("$logdir/$LOCKDIR")) {
+            logmsg "Warning: $runnerid: cleardir($logdir/$LOCKDIR) failed\n";
         }
 
-    } elsif($singletest_state{$runnerid} == ST_CLEARLOCKS) {
-        my ($rid, $logs) = runnerar($runnerid);
-        if(!$rid) {
-            logmsg "ERROR: runner $runnerid seems to have died\n";
-            $singletest_state{$runnerid} = ST_INIT;
-            return (-1, 0);
-        }
-        logmsg $logs;
-        my $logdir = getrunnerlogdir($runnerid);
-        cleardir($logdir);
         $singletest_state{$runnerid} = ST_INITED;
         # Recursively call the state machine again because there is no
         # event expected that would otherwise trigger a new call.
@@ -2252,10 +2245,6 @@ while(@ARGV) {
         $ACURL=shell_quote($ARGV[1]);
         shift @ARGV;
     }
-    elsif ($ARGV[0] eq "-bundle") {
-        # use test bundles
-        $bundle=1;
-    }
     elsif ($ARGV[0] eq "-d") {
         # have the servers display protocol output
         $debugprotocol=1;
@@ -2347,6 +2336,10 @@ while(@ARGV) {
         # Repeat-run the given tests this many times
         $repeat = $1;
     }
+    elsif($ARGV[0] =~ /--retry=(\d+)/) {
+        # Number of attempts for the whole test run to retry failed tests
+        $retry = $1;
+    }
     elsif($ARGV[0] =~ /--seed=(\d+)/) {
         # Set a fixed random seed (used for -R and --shallow)
         $randseed = $1;
@@ -2422,10 +2415,6 @@ while(@ARGV) {
             $fullstats=1;
         }
     }
-    elsif($ARGV[0] eq "-rm") {
-        # force removal of files by killing locking processes
-        $clearlocks=1;
-    }
     elsif($ARGV[0] eq "-u") {
         # error instead of warning on server unexpectedly alive
         $err_unexpected=1;
@@ -2437,7 +2426,6 @@ Usage: runtests.pl [options] [test selection(s)]
   -a       continue even if a test fails
   -ac path use this curl only to talk to APIs (currently only CI test APIs)
   -am      automake style output PASS/FAIL: [number] [name]
-  -bundle  use test bundles
   -c path  use this curl executable
   -d       display server debug info
   -e, --test-event  event-based execution
@@ -2459,8 +2447,8 @@ Usage: runtests.pl [options] [test selection(s)]
   -R       scrambled order (uses the random seed, see --seed)
   -r       run time statistics
   -rf      full run time statistics
-  -rm      force removal of files by killing locking processes (Windows only)
   --repeat=[num] run the given tests this many times
+  --retry=[num] number of attempts for the whole test run to retry failed tests
   -s       short output
   --seed=[num] set the random seed to a fixed number
   --shallow=[num] randomly makes the torture tests "thinner"
@@ -2517,6 +2505,15 @@ EOHELP
     shift @ARGV;
 }
 
+# Detect a test bundle build.
+# Do not look for 'tunits' and 'units' because not all configurations build them.
+if(-e $LIBDIR . "libtests" . exe_ext('TOOL') &&
+   -e $SRVDIR . "servers" . exe_ext('SRV')) {
+    # use test bundles
+    $bundle=1;
+    $ENV{'CURL_TEST_BUNDLES'} = 1;
+}
+
 delete $ENV{'DEBUGINFOD_URLS'} if($ENV{'DEBUGINFOD_URLS'} && $no_debuginfod);
 
 if(!$randseed) {
@@ -2525,7 +2522,7 @@ if(!$randseed) {
     # seed of the month. December 2019 becomes 201912
     $randseed = ($year+1900)*100 + $mon+1;
     print "Using curl: $CURL\n";
-    open(my $curlvh, "-|", shell_quote($CURL) . " --version 2>$dev_null") ||
+    open(my $curlvh, "-|", exerunner() . shell_quote($CURL) . " --version 2>$dev_null") ||
         die "could not get curl version!";
     my @c = <$curlvh>;
     close($curlvh) || die "could not get curl version!";
@@ -2866,9 +2863,12 @@ sub displaylogs {
 
 my $failed;
 my $failedign;
+my $failedre;
 my $ok=0;
 my $ign=0;
 my $total=0;
+my $executed=0;
+my $retry_done=0;
 my $lasttest=0;
 my @at = split(" ", $TESTCASES);
 my $count=0;
@@ -2916,6 +2916,16 @@ createrunners($numrunners);
 
 # run through each candidate test and execute it
 my $runner_wait_cnt = 0;
+
+# number of retry attempts for the whole test run
+my $retry_left;
+if($torture) {
+    $retry_left = 0;  # No use of retrying torture tests
+}
+else {
+    $retry_left = $retry;
+}
+
 while () {
     # check the abort flag
     if($globalabort) {
@@ -3005,6 +3015,7 @@ while () {
                     }
 
                     $total++; # number of tests we've run
+                    $executed++;
 
                     if($error>0) {
                         if($error==2) {
@@ -3012,7 +3023,17 @@ while () {
                             $failedign .= "$testnum ";
                         }
                         else {
-                            $failed.= "$testnum ";
+                            # make another attempt to counteract flaky failures
+                            if($retry_left > 0) {
+                                $retry_left--;
+                                $retry_done++;
+                                $total--;
+                                push(@runtests, $testnum);
+                                $failedre .= "$testnum ";
+                            }
+                            else {
+                                $failed.= "$testnum ";
+                            }
                         }
                         if($postmortem) {
                             # display all files in $LOGDIR/ in a nice way
@@ -3167,7 +3188,15 @@ sub testnumdetails {
     }
 }
 
-if($total) {
+if($executed) {
+    if($failedre) {
+        my $sorted = numsortwords($failedre);
+        logmsg "::group::Failed Retried Test details\n";
+        testnumdetails("FAIL-RETRIED", $sorted);
+        logmsg "RETRIED: failed tests: $sorted\n";
+        logmsg "::endgroup::\n";
+    }
+
     if($passedign) {
         my $sorted = numsortwords($passedign);
         logmsg "::group::Passed Ignored Test details\n";

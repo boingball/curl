@@ -23,16 +23,13 @@
  */
 
 #include "curl_setup.h"
-#include "dynbuf.h"
+#include "curlx/dynbuf.h"
 #include "curl_printf.h"
+#include "curlx/strparse.h"
 
 #include "curl_memory.h"
 /* The last #include file should be: */
 #include "memdebug.h"
-
-/*
- * If SIZEOF_SIZE_T has not been defined, default to the size of long.
- */
 
 #ifdef HAVE_LONGLONG
 #  define LONG_LONG_TYPE long long
@@ -67,10 +64,10 @@
 #endif
 
 /* Lower-case digits.  */
-static const char lower_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+const unsigned char Curl_ldigits[] = "0123456789abcdef";
 
 /* Upper-case digits.  */
-static const char upper_digits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const unsigned char Curl_udigits[] = "0123456789ABCDEF";
 
 #define OUTCHAR(x)                                      \
   do {                                                  \
@@ -134,7 +131,7 @@ enum {
 struct va_input {
   FormatType type; /* FormatType */
   union {
-    char *str;
+    const char *str;
     void *ptr;
     mp_intmax_t nums; /* signed */
     mp_uintmax_t numu; /* unsigned */
@@ -150,7 +147,7 @@ struct outsegment {
   int precision; /* precision OR precision parameter number */
   unsigned int flags;
   unsigned int input; /* input argument array index */
-  char *start;      /* format string start to output */
+  const char *start; /* format string start to output */
   size_t outlen;     /* number of bytes from the format string to output */
 };
 
@@ -169,25 +166,18 @@ struct asprintf {
 
    returns -1 if no valid number was provided.
 */
-static int dollarstring(char *input, char **end)
+static int dollarstring(const char *p, const char **end)
 {
-  if(ISDIGIT(*input)) {
-    int number = 0;
-    do {
-      if(number < MAX_PARAMETERS) {
-        number *= 10;
-        number += *input - '0';
-      }
-      input++;
-    } while(ISDIGIT(*input));
-
-    if(number && (number <= MAX_PARAMETERS) && ('$' == *input)) {
-      *end = ++input;
-      return number - 1;
-    }
-  }
-  return -1;
+  curl_off_t num;
+  if(curlx_str_number(&p, &num, MAX_PARAMETERS) ||
+     curlx_str_single(&p, '$') || !num)
+    return -1;
+  *end = p;
+  return (int)num - 1;
 }
+
+#define is_arg_used(x,y) ((x)[(y)/8] & (1 << ((y)&7)))
+#define mark_arg_used(x,y) ((x)[y/8] |= (unsigned char)(1 << ((y)&7)))
 
 /*
  * Parse the format string.
@@ -216,13 +206,8 @@ static int parsefmt(const char *format,
                     int *opieces,
                     int *ipieces, va_list arglist)
 {
-  char *fmt = (char *)format;
+  const char *fmt = format;
   int param_num = 0;
-  int param;
-  int width;
-  int precision;
-  unsigned int flags;
-  FormatType type;
   int max_param = -1;
   int i;
   int ocount = 0;
@@ -230,7 +215,7 @@ static int parsefmt(const char *format,
   size_t outlen = 0;
   struct outsegment *optr;
   int use_dollar = DOLLAR_UNKNOWN;
-  char *start = fmt;
+  const char *start = fmt;
 
   /* clear, set a bit for each used input */
   memset(usedinput, 0, sizeof(usedinput));
@@ -239,6 +224,11 @@ static int parsefmt(const char *format,
     if(*fmt == '%') {
       struct va_input *iptr;
       bool loopit = TRUE;
+      FormatType type;
+      unsigned int flags = 0;
+      int width = 0;
+      int precision = 0;
+      int param = -1;
       fmt++;
       outlen = (size_t)(fmt - start - 1);
       if(*fmt == '%') {
@@ -258,9 +248,6 @@ static int parsefmt(const char *format,
         continue; /* while */
       }
 
-      flags = 0;
-      width = precision = 0;
-
       if(use_dollar != DOLLAR_NOPE) {
         param = dollarstring(fmt, &fmt);
         if(param < 0) {
@@ -275,8 +262,6 @@ static int parsefmt(const char *format,
         else
           use_dollar = DOLLAR_USE;
       }
-      else
-        param = -1;
 
       /* Handle the flags */
       while(loopit) {
@@ -311,20 +296,15 @@ static int parsefmt(const char *format,
               precision = -1;
           }
           else {
-            bool is_neg = FALSE;
+            bool is_neg;
+            curl_off_t num;
             flags |= FLAGS_PREC;
-            precision = 0;
-            if('-' == *fmt) {
-              is_neg = TRUE;
+            is_neg = ('-' == *fmt);
+            if(is_neg)
               fmt++;
-            }
-            while(ISDIGIT(*fmt)) {
-              int n = *fmt - '0';
-              if(precision > (INT_MAX - n) / 10)
-                return PFMT_PREC;
-              precision = precision * 10 + n;
-              fmt++;
-            }
+            if(curlx_str_number(&fmt, &num, INT_MAX))
+              return PFMT_PREC;
+            precision = (int)num;
             if(is_neg)
               precision = -precision;
           }
@@ -390,18 +370,15 @@ static int parsefmt(const char *format,
             flags |= FLAGS_PAD_NIL;
           FALLTHROUGH();
         case '1': case '2': case '3': case '4':
-        case '5': case '6': case '7': case '8': case '9':
+        case '5': case '6': case '7': case '8': case '9': {
+          curl_off_t num;
           flags |= FLAGS_WIDTH;
-          width = 0;
           fmt--;
-          do {
-            int n = *fmt - '0';
-            if(width > (INT_MAX - n) / 10)
-              return PFMT_WIDTH;
-            width = width * 10 + n;
-            fmt++;
-          } while(ISDIGIT(*fmt));
+          if(curlx_str_number(&fmt, &num, INT_MAX))
+            return PFMT_WIDTH;
+          width = (int)num;
           break;
+        }
         case '*':  /* read width from argument list */
           flags |= FLAGS_WIDTHPARAM;
           if(use_dollar == DOLLAR_USE) {
@@ -511,9 +488,8 @@ static int parsefmt(const char *format,
         if(width < 0)
           width = param_num++;
         else {
-          /* if this identifies a parameter already used, this
-             is illegal */
-          if(usedinput[width/8] & (1 << (width&7)))
+          /* if this identifies a parameter already used, this is illegal */
+          if(is_arg_used(usedinput, width))
             return PFMT_WIDTHARG;
         }
         if(width >= MAX_PARAMETERS)
@@ -523,16 +499,15 @@ static int parsefmt(const char *format,
 
         in[width].type = FORMAT_WIDTH;
         /* mark as used */
-        usedinput[width/8] |= (unsigned char)(1 << (width&7));
+        mark_arg_used(usedinput, width);
       }
 
       if(flags & FLAGS_PRECPARAM) {
         if(precision < 0)
           precision = param_num++;
         else {
-          /* if this identifies a parameter already used, this
-             is illegal */
-          if(usedinput[precision/8] & (1 << (precision&7)))
+          /* if this identifies a parameter already used, this is illegal */
+          if(is_arg_used(usedinput, precision))
             return PFMT_PRECARG;
         }
         if(precision >= MAX_PARAMETERS)
@@ -541,7 +516,7 @@ static int parsefmt(const char *format,
           max_param = precision;
 
         in[precision].type = FORMAT_PRECISION;
-        usedinput[precision/8] |= (unsigned char)(1 << (precision&7));
+        mark_arg_used(usedinput, precision);
       }
 
       /* Handle the specifier */
@@ -556,7 +531,7 @@ static int parsefmt(const char *format,
       iptr->type = type;
 
       /* mark this input as used */
-      usedinput[param/8] |= (unsigned char)(1 << (param&7));
+      mark_arg_used(usedinput, param);
 
       fmt++;
       optr = &out[ocount++];
@@ -589,14 +564,14 @@ static int parsefmt(const char *format,
   /* Read the arg list parameters into our data list */
   for(i = 0; i < max_param + 1; i++) {
     struct va_input *iptr = &in[i];
-    if(!(usedinput[i/8] & (1 << (i&7))))
+    if(!is_arg_used(usedinput, i))
       /* bad input */
       return PFMT_INPUTGAP;
 
     /* based on the type, read the correct argument */
     switch(iptr->type) {
     case FORMAT_STRING:
-      iptr->val.str = va_arg(arglist, char *);
+      iptr->val.str = va_arg(arglist, const char *);
       break;
 
     case FORMAT_INTPTR:
@@ -670,7 +645,7 @@ static int formatf(
   va_list ap_save) /* list of parameters */
 {
   static const char nilstr[] = "(nil)";
-  const char *digits = lower_digits;   /* Base-36 digits for numbers.  */
+  const unsigned char *digits = Curl_ldigits;
   int done = 0;   /* number of characters written  */
   int i;
   int ocount = 0; /* number of output segments */
@@ -704,7 +679,7 @@ static int formatf(
     unsigned int flags = optr->flags;
 
     if(outlen) {
-      char *str = optr->start;
+      const char *str = optr->start;
       for(; outlen && *str; outlen--)
         OUTCHAR(*str++);
       if(optr->flags & FLAGS_SUBSTR)
@@ -773,7 +748,7 @@ static int formatf(
       }
       else if(flags & FLAGS_HEX) {
         /* Hexadecimal unsigned integer */
-        digits = (flags & FLAGS_UPPER) ? upper_digits : lower_digits;
+        digits = (flags & FLAGS_UPPER) ? Curl_udigits : Curl_ldigits;
         base = 16;
         is_neg = FALSE;
       }
@@ -802,6 +777,7 @@ number:
 
       /* Put the number in WORK.  */
       w = workend;
+      DEBUGASSERT(base <= 16);
       switch(base) {
       case 10:
         while(num > 0) {
@@ -873,7 +849,7 @@ number:
       const char *str;
       size_t len;
 
-      str = (char *)iptr->val.str;
+      str = iptr->val.str;
       if(!str) {
         /* Write null string if there is space.  */
         if(prec == -1 || prec >= (int) sizeof(nilstr) - 1) {
@@ -919,7 +895,7 @@ number:
       if(iptr->val.ptr) {
         /* If the pointer is not NULL, write it as a %#x spec.  */
         base = 16;
-        digits = (flags & FLAGS_UPPER) ? upper_digits : lower_digits;
+        digits = (flags & FLAGS_UPPER) ? Curl_udigits : Curl_ldigits;
         is_alt = TRUE;
         num = (size_t) iptr->val.ptr;
         is_neg = FALSE;
@@ -1014,7 +990,9 @@ number:
       /* NOTE NOTE NOTE!! Not all sprintf implementations return number of
          output characters */
 #ifdef HAVE_SNPRINTF
-      (snprintf)(work, BUFFSIZE, formatbuf, iptr->val.dnum); /* NOLINT */
+      /* !checksrc! disable LONGLINE */
+      /* NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling) */
+      (snprintf)(work, BUFFSIZE, formatbuf, iptr->val.dnum);
 #ifdef _WIN32
       /* Old versions of the Windows CRT do not terminate the snprintf output
          buffer if it reaches the max size so we do that here. */
@@ -1106,7 +1084,7 @@ int curl_msnprintf(char *buffer, size_t maxlength, const char *format, ...)
 static int alloc_addbyter(unsigned char outc, void *f)
 {
   struct asprintf *infop = f;
-  CURLcode result = Curl_dyn_addn(infop->b, &outc, 1);
+  CURLcode result = curlx_dyn_addn(infop->b, &outc, 1);
   if(result) {
     infop->merr = result == CURLE_TOO_LARGE ? MERR_TOO_LARGE : MERR_MEM;
     return 1 ; /* fail */
@@ -1115,7 +1093,7 @@ static int alloc_addbyter(unsigned char outc, void *f)
 }
 
 /* appends the formatted string, returns MERR error code */
-int Curl_dyn_vprintf(struct dynbuf *dyn, const char *format, va_list ap_save)
+int curlx_dyn_vprintf(struct dynbuf *dyn, const char *format, va_list ap_save)
 {
   struct asprintf info;
   info.b = dyn;
@@ -1123,7 +1101,7 @@ int Curl_dyn_vprintf(struct dynbuf *dyn, const char *format, va_list ap_save)
 
   (void)formatf(&info, alloc_addbyter, format, ap_save);
   if(info.merr) {
-    Curl_dyn_free(info.b);
+    curlx_dyn_free(info.b);
     return info.merr;
   }
   return 0;
@@ -1134,16 +1112,16 @@ char *curl_mvaprintf(const char *format, va_list ap_save)
   struct asprintf info;
   struct dynbuf dyn;
   info.b = &dyn;
-  Curl_dyn_init(info.b, DYN_APRINTF);
+  curlx_dyn_init(info.b, DYN_APRINTF);
   info.merr = MERR_OK;
 
   (void)formatf(&info, alloc_addbyter, format, ap_save);
   if(info.merr) {
-    Curl_dyn_free(info.b);
+    curlx_dyn_free(info.b);
     return NULL;
   }
-  if(Curl_dyn_len(info.b))
-    return Curl_dyn_ptr(info.b);
+  if(curlx_dyn_len(info.b))
+    return curlx_dyn_ptr(info.b);
   return strdup("");
 }
 
@@ -1189,7 +1167,6 @@ int curl_mprintf(const char *format, ...)
   int retcode;
   va_list ap_save; /* argument pointer */
   va_start(ap_save, format);
-
   retcode = formatf(stdout, fputc_wrapper, format, ap_save);
   va_end(ap_save);
   return retcode;

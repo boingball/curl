@@ -29,7 +29,7 @@
  * only be invoked by code in schannel.c.
  */
 
-#include "curl_setup.h"
+#include "../curl_setup.h"
 
 #ifdef USE_SCHANNEL
 #ifndef USE_WINDOWS_SSPI
@@ -39,19 +39,20 @@
 #include "schannel.h"
 #include "schannel_int.h"
 
-#include "inet_pton.h"
+#include "../curlx/inet_pton.h"
 #include "vtls.h"
 #include "vtls_int.h"
-#include "sendf.h"
-#include "strerror.h"
-#include "curl_multibyte.h"
-#include "curl_printf.h"
+#include "../sendf.h"
+#include "../strerror.h"
+#include "../curlx/winapi.h"
+#include "../curlx/multibyte.h"
+#include "../curl_printf.h"
 #include "hostcheck.h"
-#include "version_win32.h"
+#include "../curlx/version_win32.h"
 
 /* The last #include file should be: */
-#include "curl_memory.h"
-#include "memdebug.h"
+#include "../curl_memory.h"
+#include "../memdebug.h"
 
 #define BACKEND ((struct schannel_ssl_backend_data *)connssl->backend)
 
@@ -155,13 +156,13 @@ static CURLcode add_certs_data_to_store(HCERTSTORE trust_store,
       }
       else {
         CERT_BLOB cert_blob;
-        CERT_CONTEXT *cert_context = NULL;
+        const CERT_CONTEXT *cert_context = NULL;
         BOOL add_cert_result = FALSE;
         DWORD actual_content_type = 0;
         DWORD cert_size = (DWORD)
           ((end_cert_ptr + end_cert_len) - begin_cert_ptr);
 
-        cert_blob.pbData = (BYTE *)begin_cert_ptr;
+        cert_blob.pbData = (BYTE *)CURL_UNCONST(begin_cert_ptr);
         cert_blob.cbData = cert_size;
         if(!CryptQueryObject(CERT_QUERY_OBJECT_BLOB,
                              &cert_blob,
@@ -174,12 +175,12 @@ static CURLcode add_certs_data_to_store(HCERTSTORE trust_store,
                              NULL,
                              NULL,
                              (const void **)&cert_context)) {
-          char buffer[STRERROR_LEN];
+          char buffer[WINAPI_ERROR_LEN];
           failf(data,
                 "schannel: failed to extract certificate from CA file "
                 "'%s': %s",
                 ca_file_text,
-                Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+                curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
           result = CURLE_SSL_CACERT_BADFILE;
           more_certs = 0;
         }
@@ -203,13 +204,13 @@ static CURLcode add_certs_data_to_store(HCERTSTORE trust_store,
                                                NULL);
             CertFreeCertificateContext(cert_context);
             if(!add_cert_result) {
-              char buffer[STRERROR_LEN];
+              char buffer[WINAPI_ERROR_LEN];
               failf(data,
                     "schannel: failed to add certificate from CA file '%s' "
                     "to certificate store: %s",
                     ca_file_text,
-                    Curl_winapi_strerror(GetLastError(), buffer,
-                                         sizeof(buffer)));
+                    curlx_winapi_strerror(GetLastError(), buffer,
+                                          sizeof(buffer)));
               result = CURLE_SSL_CACERT_BADFILE;
               more_certs = 0;
             }
@@ -249,13 +250,13 @@ static CURLcode add_certs_file_to_store(HCERTSTORE trust_store,
   size_t ca_file_bufsize = 0;
   DWORD total_bytes_read = 0;
 
-  ca_file_tstr = curlx_convert_UTF8_to_tchar((char *)ca_file);
+  ca_file_tstr = curlx_convert_UTF8_to_tchar(ca_file);
   if(!ca_file_tstr) {
-    char buffer[STRERROR_LEN];
+    char buffer[WINAPI_ERROR_LEN];
     failf(data,
           "schannel: invalid path name for CA file '%s': %s",
           ca_file,
-          Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+          curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
     result = CURLE_SSL_CACERT_BADFILE;
     goto cleanup;
   }
@@ -273,21 +274,21 @@ static CURLcode add_certs_file_to_store(HCERTSTORE trust_store,
                               FILE_ATTRIBUTE_NORMAL,
                               NULL);
   if(ca_file_handle == INVALID_HANDLE_VALUE) {
-    char buffer[STRERROR_LEN];
+    char buffer[WINAPI_ERROR_LEN];
     failf(data,
           "schannel: failed to open CA file '%s': %s",
           ca_file,
-          Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+          curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
     result = CURLE_SSL_CACERT_BADFILE;
     goto cleanup;
   }
 
   if(!GetFileSizeEx(ca_file_handle, &file_size)) {
-    char buffer[STRERROR_LEN];
+    char buffer[WINAPI_ERROR_LEN];
     failf(data,
           "schannel: failed to determine size of CA file '%s': %s",
           ca_file,
-          Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+          curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
     result = CURLE_SSL_CACERT_BADFILE;
     goto cleanup;
   }
@@ -313,11 +314,11 @@ static CURLcode add_certs_file_to_store(HCERTSTORE trust_store,
 
     if(!ReadFile(ca_file_handle, ca_file_buffer + total_bytes_read,
                  bytes_to_read, &bytes_read, NULL)) {
-      char buffer[STRERROR_LEN];
+      char buffer[WINAPI_ERROR_LEN];
       failf(data,
             "schannel: failed to read from CA file '%s': %s",
             ca_file,
-            Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+            curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
       result = CURLE_SSL_CACERT_BADFILE;
       goto cleanup;
     }
@@ -399,6 +400,9 @@ static DWORD cert_get_name_string(struct Curl_easy *data,
   (void)Win8_compat;
 #endif
 
+  if(!alt_name_info)
+    return 0;
+
   compute_content = host_names != NULL && length != 0;
 
   /* Initialize default return values. */
@@ -461,14 +465,14 @@ static bool get_num_host_info(struct num_ip_data *ip_blob,
   struct in6_addr ia6;
   bool result = FALSE;
 
-  int res = Curl_inet_pton(AF_INET, hostname, &ia);
+  int res = curlx_inet_pton(AF_INET, hostname, &ia);
   if(res) {
     ip_blob->size = sizeof(struct in_addr);
     memcpy(&ip_blob->bData.ia, &ia, sizeof(struct in_addr));
     result = TRUE;
   }
   else {
-    res = Curl_inet_pton(AF_INET6, hostname, &ia6);
+    res = curlx_inet_pton(AF_INET6, hostname, &ia6);
     if(res) {
       ip_blob->size = sizeof(struct in6_addr);
       memcpy(&ip_blob->bData.ia6, &ia6, sizeof(struct in6_addr));
@@ -611,7 +615,7 @@ CURLcode Curl_verify_host(struct Curl_cfilter *cf,
                                      &pCertContextServer);
 
   if((sspi_status != SEC_E_OK) || !pCertContextServer) {
-    char buffer[STRERROR_LEN];
+    char buffer[WINAPI_ERROR_LEN];
     failf(data, "schannel: Failed to read remote certificate context: %s",
           Curl_sspi_strerror(sspi_status, buffer, sizeof(buffer)));
     goto cleanup;
@@ -767,7 +771,7 @@ CURLcode Curl_verify_certificate(struct Curl_cfilter *cf,
                                         &pCertContextServer);
 
   if((sspi_status != SEC_E_OK) || !pCertContextServer) {
-    char buffer[STRERROR_LEN];
+    char buffer[WINAPI_ERROR_LEN];
     failf(data, "schannel: Failed to read remote certificate context: %s",
           Curl_sspi_strerror(sspi_status, buffer, sizeof(buffer)));
     result = CURLE_PEER_FAILED_VERIFICATION;
@@ -803,9 +807,9 @@ CURLcode Curl_verify_certificate(struct Curl_cfilter *cf,
                                     CERT_STORE_CREATE_NEW_FLAG,
                                     NULL);
         if(!trust_store) {
-          char buffer[STRERROR_LEN];
+          char buffer[WINAPI_ERROR_LEN];
           failf(data, "schannel: failed to create certificate store: %s",
-                Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+                curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
           result = CURLE_SSL_CACERT_BADFILE;
         }
         else {
@@ -850,10 +854,10 @@ CURLcode Curl_verify_certificate(struct Curl_cfilter *cf,
         CertCreateCertificateChainEngine(
           (CERT_CHAIN_ENGINE_CONFIG *)&engine_config, &cert_chain_engine);
       if(!create_engine_result) {
-        char buffer[STRERROR_LEN];
+        char buffer[WINAPI_ERROR_LEN];
         failf(data,
               "schannel: failed to create certificate chain engine: %s",
-              Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+              curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
         result = CURLE_SSL_CACERT_BADFILE;
       }
     }
@@ -875,9 +879,9 @@ CURLcode Curl_verify_certificate(struct Curl_cfilter *cf,
                                  CERT_CHAIN_REVOCATION_CHECK_CHAIN),
                                 NULL,
                                 &pChainContext)) {
-      char buffer[STRERROR_LEN];
+      char buffer[WINAPI_ERROR_LEN];
       failf(data, "schannel: CertGetCertificateChain failed: %s",
-            Curl_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
+            curlx_winapi_strerror(GetLastError(), buffer, sizeof(buffer)));
       pChainContext = NULL;
       result = CURLE_PEER_FAILED_VERIFICATION;
     }

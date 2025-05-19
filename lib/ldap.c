@@ -89,10 +89,10 @@
 #include "progress.h"
 #include "transfer.h"
 #include "strcase.h"
-#include "strparse.h"
+#include "curlx/strparse.h"
 #include "curl_ldap.h"
-#include "curl_multibyte.h"
-#include "curl_base64.h"
+#include "curlx/multibyte.h"
+#include "curlx/base64.h"
 #include "connect.h"
 /* The last 3 #include files should be in this order */
 #include "curl_printf.h"
@@ -285,8 +285,8 @@ static int ldap_win_bind(struct Curl_easy *data, LDAP *server,
   PTCHAR inpass = NULL;
 
   if(user && passwd && (data->set.httpauth & CURLAUTH_BASIC)) {
-    inuser = curlx_convert_UTF8_to_tchar((char *) user);
-    inpass = curlx_convert_UTF8_to_tchar((char *) passwd);
+    inuser = curlx_convert_UTF8_to_tchar(user);
+    inpass = curlx_convert_UTF8_to_tchar(passwd);
 
     rc = (int)ldap_simple_bind_s(server, inuser, inpass);
 
@@ -543,7 +543,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
 #endif
       name_len = strlen(name);
 
-      result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)"DN: ", 4);
+      result = Curl_client_write(data, CLIENTWRITE_BODY, "DN: ", 4);
       if(result) {
         FREE_ON_WINLDAP(name);
         ldap_memfree(dn);
@@ -557,7 +557,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
         goto quit;
       }
 
-      result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)"\n", 1);
+      result = Curl_client_write(data, CLIENTWRITE_BODY, "\n", 1);
       if(result) {
         FREE_ON_WINLDAP(name);
         ldap_memfree(dn);
@@ -593,7 +593,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
       vals = ldap_get_values_len(server, entryIterator, attribute);
       if(vals) {
         for(i = 0; (vals[i] != NULL); i++) {
-          result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)"\t", 1);
+          result = Curl_client_write(data, CLIENTWRITE_BODY, "\t", 1);
           if(result) {
             ldap_value_free_len(vals);
             FREE_ON_WINLDAP(attr);
@@ -615,7 +615,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
             goto quit;
           }
 
-          result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)": ", 2);
+          result = Curl_client_write(data, CLIENTWRITE_BODY, ": ", 2);
           if(result) {
             ldap_value_free_len(vals);
             FREE_ON_WINLDAP(attr);
@@ -629,8 +629,8 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
           if((attr_len > 7) &&
              (strcmp(";binary", attr + (attr_len - 7)) == 0)) {
             /* Binary attribute, encode to base64. */
-            result = Curl_base64_encode(vals[i]->bv_val, vals[i]->bv_len,
-                                        &val_b64, &val_b64_sz);
+            result = curlx_base64_encode(vals[i]->bv_val, vals[i]->bv_len,
+                                         &val_b64, &val_b64_sz);
             if(result) {
               ldap_value_free_len(vals);
               FREE_ON_WINLDAP(attr);
@@ -670,7 +670,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
             }
           }
 
-          result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)"\n", 1);
+          result = Curl_client_write(data, CLIENTWRITE_BODY, "\n", 1);
           if(result) {
             ldap_value_free_len(vals);
             FREE_ON_WINLDAP(attr);
@@ -690,7 +690,7 @@ static CURLcode ldap_do(struct Curl_easy *data, bool *done)
       FREE_ON_WINLDAP(attr);
       ldap_memfree(attribute);
 
-      result = Curl_client_write(data, CLIENTWRITE_BODY, (char *)"\n", 1);
+      result = Curl_client_write(data, CLIENTWRITE_BODY, "\n", 1);
       if(result)
         goto quit;
     }
@@ -729,7 +729,7 @@ static void _ldap_trace(const char *fmt, ...)
   if(do_trace == -1) {
     const char *env = getenv("CURL_TRACE");
     curl_off_t e = 0;
-    if(!Curl_str_number(&env, &e, INT_MAX))
+    if(!curlx_str_number(&env, &e, INT_MAX))
       do_trace = e > 0;
   }
   if(!do_trace)
@@ -884,7 +884,7 @@ static int _ldap_url_parse2(struct Curl_easy *data,
       CURLcode result;
       struct Curl_str out;
 
-      if(Curl_str_until(&atp, &out, 1024, ','))
+      if(curlx_str_until(&atp, &out, 1024, ','))
         break;
 
       LDAP_TRACE(("attr[%zu] '%.*s'\n", i, (int)out.len, out.str));
@@ -913,7 +913,7 @@ static int _ldap_url_parse2(struct Curl_easy *data,
 #endif
 
       ludp->lud_attrs_dups++;
-      if(Curl_str_single(&atp, ','))
+      if(curlx_str_single(&atp, ','))
         break;
     }
   }

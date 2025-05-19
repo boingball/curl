@@ -24,14 +24,18 @@
  *
  ***************************************************************************/
 
+#include "hash.h"
+
 struct Curl_easy;
 struct Curl_multi;
 struct easy_pollset;
+struct uint_bset;
+
+/* meta key for event pollset at easy handle or connection */
+#define CURL_META_MEV_POLLSET   "meta:mev:ps"
 
 struct curl_multi_ev {
   struct Curl_hash sh_entries;
-  struct Curl_hash xfer_pollsets;
-  struct Curl_hash conn_pollsets;
 };
 
 /* Setup/teardown of multi event book-keeping. */
@@ -50,8 +54,8 @@ CURLMcode Curl_multi_ev_assign(struct Curl_multi *multi, curl_socket_t s,
 CURLMcode Curl_multi_ev_assess_xfer(struct Curl_multi *multi,
                                     struct Curl_easy *data);
 /* Assess all easy handles on the list */
-CURLMcode Curl_multi_ev_assess_xfer_list(struct Curl_multi *multi,
-                                         struct Curl_llist *list);
+CURLMcode Curl_multi_ev_assess_xfer_bset(struct Curl_multi *multi,
+                                         struct uint_bset *set);
 /* Assess the connection by getting its current pollset */
 CURLMcode Curl_multi_ev_assess_conn(struct Curl_multi *multi,
                                     struct Curl_easy *data,

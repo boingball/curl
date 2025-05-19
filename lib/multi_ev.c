@@ -27,13 +27,17 @@
 #include <curl/curl.h>
 
 #include "urldata.h"
+#include "url.h"
 #include "cfilters.h"
 #include "curl_trc.h"
 #include "multiif.h"
-#include "timeval.h"
+#include "curlx/timeval.h"
 #include "multi_ev.h"
 #include "select.h"
-#include "warnless.h"
+#include "uint-bset.h"
+#include "uint-spbset.h"
+#include "uint-table.h"
+#include "curlx/warnless.h"
 #include "multihandle.h"
 #include "socks.h"
 /* The last 3 #include files should be in this order */
@@ -47,15 +51,14 @@ static void mev_in_callback(struct Curl_multi *multi, bool value)
   multi->in_callback = value;
 }
 
-#define CURL_MEV_XFER_HASH_SIZE 13
 #define CURL_MEV_CONN_HASH_SIZE 3
 
 /* Information about a socket for which we inform the libcurl application
  * what to supervise (CURL_POLL_IN/CURL_POLL_OUT/CURL_POLL_REMOVE)
  */
 struct mev_sh_entry {
-  struct Curl_hash xfers; /* hash of transfers using this socket */
-  struct Curl_hash conns; /* hash of connections using this socket */
+  struct uint_spbset xfers; /* bitset of transfers `mid`s on this socket */
+  struct connectdata *conn; /* connection using this socket or NULL */
   void *user_data;      /* libcurl app data via curl_multi_assign() */
   unsigned int action;  /* CURL_POLL_IN/CURL_POLL_OUT we last told the
                          * libcurl application to watch out for */
@@ -81,8 +84,7 @@ static size_t mev_sh_entry_compare(void *k1, size_t k1_len,
 static void mev_sh_entry_dtor(void *freethis)
 {
   struct mev_sh_entry *entry = (struct mev_sh_entry *)freethis;
-  Curl_hash_destroy(&entry->xfers);
-  Curl_hash_destroy(&entry->conns);
+  Curl_uint_spbset_destroy(&entry->xfers);
   free(entry);
 }
 
@@ -95,11 +97,6 @@ mev_sh_entry_get(struct Curl_hash *sh, curl_socket_t s)
     return Curl_hash_pick(sh, (char *)&s, sizeof(curl_socket_t));
   }
   return NULL;
-}
-
-static void mev_nop_dtor(void *e)
-{
-  (void)e; /* does nothing */
 }
 
 /* make sure this socket is present in the hash for this handle */
@@ -119,8 +116,7 @@ mev_sh_entry_add(struct Curl_hash *sh, curl_socket_t s)
   if(!check)
     return NULL; /* major failure */
 
-  Curl_hash_offt_init(&check->xfers, CURL_MEV_XFER_HASH_SIZE, mev_nop_dtor);
-  Curl_hash_offt_init(&check->conns, CURL_MEV_CONN_HASH_SIZE, mev_nop_dtor);
+  Curl_uint_spbset_init(&check->xfers);
 
   /* make/add new hash entry */
   if(!Curl_hash_add(sh, (char *)&s, sizeof(curl_socket_t), check)) {
@@ -139,19 +135,19 @@ static void mev_sh_entry_kill(struct Curl_multi *multi, curl_socket_t s)
 
 static size_t mev_sh_entry_user_count(struct mev_sh_entry *e)
 {
-  return Curl_hash_count(&e->xfers) + Curl_hash_count(&e->conns);
+  return Curl_uint_spbset_count(&e->xfers) + (e->conn ? 1 : 0);
 }
 
 static bool mev_sh_entry_xfer_known(struct mev_sh_entry *e,
                                     struct Curl_easy *data)
 {
-  return !!Curl_hash_offt_get(&e->xfers, data->id);
+  return Curl_uint_spbset_contains(&e->xfers, data->mid);
 }
 
 static bool mev_sh_entry_conn_known(struct mev_sh_entry *e,
                                     struct connectdata *conn)
 {
-  return !!Curl_hash_offt_get(&e->conns, conn->connection_id);
+  return (e->conn == conn);
 }
 
 static bool mev_sh_entry_xfer_add(struct mev_sh_entry *e,
@@ -159,7 +155,7 @@ static bool mev_sh_entry_xfer_add(struct mev_sh_entry *e,
 {
    /* detect weird values */
   DEBUGASSERT(mev_sh_entry_user_count(e) < 100000);
-  return !!Curl_hash_offt_set(&e->xfers, data->id, data);
+  return Curl_uint_spbset_add(&e->xfers, data->mid);
 }
 
 static bool mev_sh_entry_conn_add(struct mev_sh_entry *e,
@@ -167,14 +163,32 @@ static bool mev_sh_entry_conn_add(struct mev_sh_entry *e,
 {
    /* detect weird values */
   DEBUGASSERT(mev_sh_entry_user_count(e) < 100000);
-  return !!Curl_hash_offt_set(&e->conns, conn->connection_id, conn);
+  DEBUGASSERT(!e->conn);
+  if(e->conn)
+    return FALSE;
+  e->conn = conn;
+  return TRUE;
 }
 
 
 static bool mev_sh_entry_xfer_remove(struct mev_sh_entry *e,
                                      struct Curl_easy *data)
 {
-  return !Curl_hash_offt_remove(&e->xfers, data->id);
+  bool present = Curl_uint_spbset_contains(&e->xfers, data->mid);
+  if(present)
+    Curl_uint_spbset_remove(&e->xfers, data->mid);
+  return present;
+}
+
+static bool mev_sh_entry_conn_remove(struct mev_sh_entry *e,
+                                     struct connectdata *conn)
+{
+  DEBUGASSERT(e->conn == conn);
+  if(e->conn == conn) {
+    e->conn = NULL;
+    return TRUE;
+  }
+  return FALSE;
 }
 
 /* Purge any information about socket `s`.
@@ -316,7 +330,7 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
       CURL_TRC_M(data, "ev new entry fd=%" FMT_SOCKET_T, s);
     }
     else if(conn) {
-      first_time = !mev_sh_entry_conn_known(entry, data->conn);
+      first_time = !mev_sh_entry_conn_known(entry, conn);
     }
     else {
       first_time = !mev_sh_entry_xfer_known(entry, data);
@@ -330,7 +344,7 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
     last_action = 0;
     if(first_time) {
       if(conn) {
-        if(!mev_sh_entry_conn_add(entry, data->conn))
+        if(!mev_sh_entry_conn_add(entry, conn))
           return CURLM_OUT_OF_MEMORY;
       }
       else {
@@ -338,11 +352,11 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
           return CURLM_OUT_OF_MEMORY;
       }
       CURL_TRC_M(data, "ev entry fd=%" FMT_SOCKET_T ", added %s #%" FMT_OFF_T
-                 ", total=%zu/%zu (xfer/conn)", s,
+                 ", total=%u/%d (xfer/conn)", s,
                  conn ? "connection" : "transfer",
-                 conn ? conn->connection_id : data->id,
-                 Curl_hash_count(&entry->xfers),
-                 Curl_hash_count(&entry->conns));
+                 conn ? conn->connection_id : data->mid,
+                 Curl_uint_spbset_count(&entry->xfers),
+                 entry->conn ? 1 : 0);
     }
     else {
       for(j = 0; j < prev_ps->num; j++) {
@@ -381,7 +395,17 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
     if(!entry)
       continue;
 
-    if(!mev_sh_entry_xfer_remove(entry, data)) {
+    if(conn && !mev_sh_entry_conn_remove(entry, conn)) {
+      /* `conn` says in `prev_ps` that it had been using a socket,
+       * but `conn` has not been registered for it.
+       * This should not happen if our book-keeping is correct? */
+      CURL_TRC_M(data, "ev entry fd=%" FMT_SOCKET_T ", conn lost "
+                 "interest but is not registered", s);
+      DEBUGASSERT(NULL);
+      continue;
+    }
+
+    if(!conn && !mev_sh_entry_xfer_remove(entry, data)) {
       /* `data` says in `prev_ps` that it had been using a socket,
        * but `data` has not been registered for it.
        * This should not happen if our book-keeping is correct? */
@@ -398,9 +422,9 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
       if(mresult)
         return mresult;
       CURL_TRC_M(data, "ev entry fd=%" FMT_SOCKET_T ", removed transfer, "
-                 "total=%zu/%zu (xfer/conn)", s,
-                 Curl_hash_count(&entry->xfers),
-                 Curl_hash_count(&entry->conns));
+                 "total=%u/%d (xfer/conn)", s,
+                 Curl_uint_spbset_count(&entry->xfers),
+                 entry->conn ? 1 : 0);
     }
     else {
       mresult = mev_forget_socket(multi, data, s, "last user gone");
@@ -414,32 +438,47 @@ static CURLMcode mev_pollset_diff(struct Curl_multi *multi,
   return CURLM_OK;
 }
 
+static void mev_pollset_dtor(void *key, size_t klen, void *entry)
+{
+  (void)key;
+  (void)klen;
+  free(entry);
+}
+
 static struct easy_pollset*
-mev_add_new_pollset(struct Curl_hash *h, curl_off_t id)
+mev_add_new_conn_pollset(struct connectdata *conn)
 {
   struct easy_pollset *ps;
 
   ps = calloc(1, sizeof(*ps));
   if(!ps)
     return NULL;
-  if(!Curl_hash_offt_set(h, id, ps)) {
-    free(ps);
+  if(Curl_conn_meta_set(conn, CURL_META_MEV_POLLSET, ps, mev_pollset_dtor))
     return NULL;
-  }
+  return ps;
+}
+
+static struct easy_pollset*
+mev_add_new_xfer_pollset(struct Curl_easy *data)
+{
+  struct easy_pollset *ps;
+
+  ps = calloc(1, sizeof(*ps));
+  if(!ps)
+    return NULL;
+  if(Curl_meta_set(data, CURL_META_MEV_POLLSET, ps, mev_pollset_dtor))
+    return NULL;
   return ps;
 }
 
 static struct easy_pollset *
-mev_get_last_pollset(struct Curl_multi *multi,
-                     struct Curl_easy *data,
+mev_get_last_pollset(struct Curl_easy *data,
                      struct connectdata *conn)
 {
   if(data) {
     if(conn)
-      return Curl_hash_offt_get(&multi->ev.conn_pollsets,
-                                conn->connection_id);
-    else if(data)
-      return Curl_hash_offt_get(&multi->ev.xfer_pollsets, data->id);
+      return Curl_conn_meta_get(conn, CURL_META_MEV_POLLSET);
+    return Curl_meta_get(data, CURL_META_MEV_POLLSET);
   }
   return NULL;
 }
@@ -463,14 +502,13 @@ static CURLMcode mev_assess(struct Curl_multi *multi,
     struct easy_pollset ps, *last_ps;
 
     mev_init_cur_pollset(&ps, data, conn);
-    last_ps = mev_get_last_pollset(multi, data, conn);
+    last_ps = mev_get_last_pollset(data, conn);
 
     if(!last_ps && ps.num) {
       if(conn)
-        last_ps = mev_add_new_pollset(&multi->ev.conn_pollsets,
-                                      data->conn->connection_id);
+        last_ps = mev_add_new_conn_pollset(conn);
       else
-        last_ps = mev_add_new_pollset(&multi->ev.xfer_pollsets, data->id);
+        last_ps = mev_add_new_xfer_pollset(data);
       if(!last_ps)
         return CURLM_OUT_OF_MEMORY;
     }
@@ -496,16 +534,19 @@ CURLMcode Curl_multi_ev_assess_conn(struct Curl_multi *multi,
   return mev_assess(multi, data, conn);
 }
 
-CURLMcode Curl_multi_ev_assess_xfer_list(struct Curl_multi *multi,
-                                         struct Curl_llist *list)
+CURLMcode Curl_multi_ev_assess_xfer_bset(struct Curl_multi *multi,
+                                         struct uint_bset *set)
 {
-  struct Curl_llist_node *e;
+  unsigned int mid;
   CURLMcode result = CURLM_OK;
 
-  if(multi && multi->socket_cb) {
-    for(e = Curl_llist_head(list); e && !result; e = Curl_node_next(e)) {
-      result = Curl_multi_ev_assess_xfer(multi, Curl_node_elem(e));
+  if(multi && multi->socket_cb && Curl_uint_bset_first(set, &mid)) {
+    do {
+      struct Curl_easy *data = Curl_multi_get_easy(multi, mid);
+      if(data)
+        result = Curl_multi_ev_assess_xfer(multi, data);
     }
+    while(!result && Curl_uint_bset_next(set, mid, &mid));
   }
   return result;
 }
@@ -521,7 +562,6 @@ CURLMcode Curl_multi_ev_assign(struct Curl_multi *multi,
   e->user_data = user_data;
   return CURLM_OK;
 }
-
 
 void Curl_multi_ev_expire_xfers(struct Curl_multi *multi,
                                 curl_socket_t s,
@@ -539,24 +579,22 @@ void Curl_multi_ev_expire_xfers(struct Curl_multi *multi,
      asked to get removed, so thus we better survive stray socket actions
      and just move on. */
   if(entry) {
-    struct Curl_hash_iterator iter;
-    struct Curl_hash_element *he;
+    struct Curl_easy *data;
+    unsigned int mid;
 
-    /* the socket can be shared by many transfers, iterate */
-    Curl_hash_start_iterate(&entry->xfers, &iter);
-    for(he = Curl_hash_next_element(&iter); he;
-        he = Curl_hash_next_element(&iter)) {
-      struct Curl_easy *data = (struct Curl_easy *)he->ptr;
-      DEBUGASSERT(data);
-      DEBUGASSERT(data->magic == CURLEASY_MAGIC_NUMBER);
-      DEBUGASSERT(data->id >= 0); /* we should not track internal handles */
-
-      /* Expire with out current now, so we will get it below when
-       * asking the splaytree for expired transfers. */
-      Curl_expire_ex(data, nowp, 0, EXPIRE_RUN_NOW);
+    if(Curl_uint_spbset_first(&entry->xfers, &mid)) {
+      do {
+        data = Curl_multi_get_easy(multi, mid);
+        if(data) {
+          /* Expire with out current now, so we will get it below when
+           * asking the splaytree for expired transfers. */
+          Curl_expire_ex(data, nowp, 0, EXPIRE_RUN_NOW);
+        }
+      }
+      while(Curl_uint_spbset_next(&entry->xfers, mid, &mid));
     }
 
-    if(Curl_hash_count(&entry->conns))
+    if(entry->conn)
       *run_cpool = TRUE;
   }
 }
@@ -571,9 +609,9 @@ void Curl_multi_ev_xfer_done(struct Curl_multi *multi,
                              struct Curl_easy *data)
 {
   DEBUGASSERT(!data->conn); /* transfer should have been detached */
-  if(data->id >= 0) {
+  if(data != multi->admin) {
     (void)mev_assess(multi, data, NULL);
-    Curl_hash_offt_remove(&multi->ev.xfer_pollsets, data->id);
+    Curl_meta_remove(data, CURL_META_MEV_POLLSET);
   }
 }
 
@@ -582,29 +620,18 @@ void Curl_multi_ev_conn_done(struct Curl_multi *multi,
                              struct connectdata *conn)
 {
   (void)mev_assess(multi, data, conn);
-  Curl_hash_offt_remove(&multi->ev.conn_pollsets, conn->connection_id);
+  Curl_conn_meta_remove(conn, CURL_META_MEV_POLLSET);
 }
 
 #define CURL_MEV_PS_HASH_SLOTS   (991)  /* nice prime */
-
-static void mev_hash_pollset_free(void *entry)
-{
-  free(entry);
-}
 
 void Curl_multi_ev_init(struct Curl_multi *multi, size_t hashsize)
 {
   Curl_hash_init(&multi->ev.sh_entries, hashsize, mev_sh_entry_hash,
                  mev_sh_entry_compare, mev_sh_entry_dtor);
-  Curl_hash_offt_init(&multi->ev.xfer_pollsets,
-                      CURL_MEV_PS_HASH_SLOTS, mev_hash_pollset_free);
-  Curl_hash_offt_init(&multi->ev.conn_pollsets,
-                      CURL_MEV_PS_HASH_SLOTS, mev_hash_pollset_free);
 }
 
 void Curl_multi_ev_cleanup(struct Curl_multi *multi)
 {
   Curl_hash_destroy(&multi->ev.sh_entries);
-  Curl_hash_destroy(&multi->ev.xfer_pollsets);
-  Curl_hash_destroy(&multi->ev.conn_pollsets);
 }

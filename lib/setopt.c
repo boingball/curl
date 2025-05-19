@@ -43,7 +43,7 @@
 #include "strcase.h"
 #include "share.h"
 #include "vtls/vtls.h"
-#include "warnless.h"
+#include "curlx/warnless.h"
 #include "sendf.h"
 #include "http2.h"
 #include "setopt.h"
@@ -255,6 +255,141 @@ static CURLcode httpauth(struct Curl_easy *data, bool proxy,
   return CURLE_OK;
 }
 
+#ifndef CURL_DISABLE_HTTP
+static CURLcode setopt_HTTP_VERSION(struct Curl_easy *data, long arg)
+{
+  /*
+   * This sets a requested HTTP version to be used. The value is one of
+   * the listed enums in curl/curl.h.
+   */
+  switch(arg) {
+  case CURL_HTTP_VERSION_NONE:
+    /* accepted */
+    break;
+  case CURL_HTTP_VERSION_1_0:
+  case CURL_HTTP_VERSION_1_1:
+    /* accepted */
+    break;
+#ifdef USE_HTTP2
+  case CURL_HTTP_VERSION_2_0:
+  case CURL_HTTP_VERSION_2TLS:
+  case CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE:
+    /* accepted */
+    break;
+#endif
+#ifdef USE_HTTP3
+  case CURL_HTTP_VERSION_3:
+  case CURL_HTTP_VERSION_3ONLY:
+    /* accepted */
+    break;
+#endif
+  default:
+    /* not accepted */
+    if(arg < CURL_HTTP_VERSION_NONE)
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+    return CURLE_UNSUPPORTED_PROTOCOL;
+  }
+  data->set.httpwant = (unsigned char)arg;
+  return CURLE_OK;
+}
+#endif /* ! CURL_DISABLE_HTTP */
+
+#ifdef USE_SSL
+static CURLcode setopt_SSLVERSION(struct Curl_easy *data, CURLoption option,
+                                  long arg)
+{
+  /*
+   * Set explicit SSL version to try to connect with, as some SSL
+   * implementations are lame.
+   */
+  {
+    long version, version_max;
+    struct ssl_primary_config *primary = &data->set.ssl.primary;
+#ifndef CURL_DISABLE_PROXY
+    if(option != CURLOPT_SSLVERSION)
+      primary = &data->set.proxy_ssl.primary;
+#else
+    if(option) {}
+#endif
+    version = C_SSLVERSION_VALUE(arg);
+    version_max = (long)C_SSLVERSION_MAX_VALUE(arg);
+
+    if(version < CURL_SSLVERSION_DEFAULT ||
+       version == CURL_SSLVERSION_SSLv2 ||
+       version == CURL_SSLVERSION_SSLv3 ||
+       version >= CURL_SSLVERSION_LAST ||
+       version_max < CURL_SSLVERSION_MAX_NONE ||
+       version_max >= CURL_SSLVERSION_MAX_LAST)
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+
+    primary->version = (unsigned char)version;
+    primary->version_max = (unsigned int)version_max;
+  }
+  return CURLE_OK;
+}
+#endif /* ! USE_SSL */
+
+#ifndef CURL_DISABLE_RTSP
+static CURLcode setopt_RTSP_REQUEST(struct Curl_easy *data, long arg)
+{
+  /*
+   * Set the RTSP request method (OPTIONS, SETUP, PLAY, etc...)
+   * Would this be better if the RTSPREQ_* were just moved into here?
+   */
+  Curl_RtspReq rtspreq = RTSPREQ_NONE;
+  switch(arg) {
+  case CURL_RTSPREQ_OPTIONS:
+    rtspreq = RTSPREQ_OPTIONS;
+    break;
+
+  case CURL_RTSPREQ_DESCRIBE:
+    rtspreq = RTSPREQ_DESCRIBE;
+    break;
+
+  case CURL_RTSPREQ_ANNOUNCE:
+    rtspreq = RTSPREQ_ANNOUNCE;
+    break;
+
+  case CURL_RTSPREQ_SETUP:
+    rtspreq = RTSPREQ_SETUP;
+    break;
+
+  case CURL_RTSPREQ_PLAY:
+    rtspreq = RTSPREQ_PLAY;
+    break;
+
+  case CURL_RTSPREQ_PAUSE:
+    rtspreq = RTSPREQ_PAUSE;
+    break;
+
+  case CURL_RTSPREQ_TEARDOWN:
+    rtspreq = RTSPREQ_TEARDOWN;
+    break;
+
+  case CURL_RTSPREQ_GET_PARAMETER:
+    rtspreq = RTSPREQ_GET_PARAMETER;
+    break;
+
+  case CURL_RTSPREQ_SET_PARAMETER:
+    rtspreq = RTSPREQ_SET_PARAMETER;
+    break;
+
+  case CURL_RTSPREQ_RECORD:
+    rtspreq = RTSPREQ_RECORD;
+    break;
+
+  case CURL_RTSPREQ_RECEIVE:
+    rtspreq = RTSPREQ_RECEIVE;
+    break;
+  default:
+    return CURLE_BAD_FUNCTION_ARGUMENT;
+  }
+
+  data->set.rtspreq = rtspreq;
+  return CURLE_OK;
+}
+#endif /* ! CURL_DISABLE_RTSP */
+
 static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
                             long arg)
 {
@@ -290,7 +425,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
       return CURLE_BAD_FUNCTION_ARGUMENT;
     data->set.maxconnects = (unsigned int)uarg;
     break;
-   case CURLOPT_FORBID_REUSE:
+  case CURLOPT_FORBID_REUSE:
     /*
      * When this transfer is done, it must not be left to be reused by a
      * subsequent transfer but shall be closed immediately.
@@ -438,7 +573,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
      */
     if((arg < CURL_TIMECOND_NONE) || (arg >= CURL_TIMECOND_LAST))
       return CURLE_BAD_FUNCTION_ARGUMENT;
-    data->set.timecondition = (unsigned char)(curl_TimeCond)arg;
+    data->set.timecondition = (unsigned char)arg;
     break;
   case CURLOPT_TIMEVALUE:
     /*
@@ -451,36 +586,12 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
 #ifndef CURL_DISABLE_PROXY
   case CURLOPT_PROXY_SSLVERSION:
 #endif
-    /*
-     * Set explicit SSL version to try to connect with, as some SSL
-     * implementations are lame.
-     */
 #ifdef USE_SSL
-    {
-      long version, version_max;
-      struct ssl_primary_config *primary = &data->set.ssl.primary;
-#ifndef CURL_DISABLE_PROXY
-      if(option != CURLOPT_SSLVERSION)
-        primary = &data->set.proxy_ssl.primary;
-#endif
-      version = C_SSLVERSION_VALUE(arg);
-      version_max = (long)C_SSLVERSION_MAX_VALUE(arg);
-
-      if(version < CURL_SSLVERSION_DEFAULT ||
-         version == CURL_SSLVERSION_SSLv2 ||
-         version == CURL_SSLVERSION_SSLv3 ||
-         version >= CURL_SSLVERSION_LAST ||
-         version_max < CURL_SSLVERSION_MAX_NONE ||
-         version_max >= CURL_SSLVERSION_MAX_LAST)
-        return CURLE_BAD_FUNCTION_ARGUMENT;
-
-      primary->version = (unsigned char)version;
-      primary->version_max = (unsigned int)version_max;
-    }
+    return setopt_SSLVERSION(data, option, arg);
 #else
     return CURLE_NOT_BUILT_IN;
 #endif
-    break;
+
   case CURLOPT_POSTFIELDSIZE:
     /*
      * The size of the POSTFIELD data to prevent libcurl to do strlen() to
@@ -525,7 +636,9 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     /*
      * Follow Location: header hints on an HTTP-server.
      */
-    data->set.http_follow_location = enabled;
+    if(uarg > 3)
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+    data->set.http_follow_mode = (unsigned char)uarg;
     break;
 
   case CURLOPT_UNRESTRICTED_AUTH:
@@ -594,39 +707,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     break;
 
   case CURLOPT_HTTP_VERSION:
-    /*
-     * This sets a requested HTTP version to be used. The value is one of
-     * the listed enums in curl/curl.h.
-     */
-    switch(arg) {
-    case CURL_HTTP_VERSION_NONE:
-      /* accepted */
-      break;
-    case CURL_HTTP_VERSION_1_0:
-    case CURL_HTTP_VERSION_1_1:
-      /* accepted */
-      break;
-#ifdef USE_HTTP2
-    case CURL_HTTP_VERSION_2_0:
-    case CURL_HTTP_VERSION_2TLS:
-    case CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE:
-      /* accepted */
-      break;
-#endif
-#ifdef USE_HTTP3
-    case CURL_HTTP_VERSION_3:
-    case CURL_HTTP_VERSION_3ONLY:
-      /* accepted */
-      break;
-#endif
-    default:
-      /* not accepted */
-      if(arg < CURL_HTTP_VERSION_NONE)
-        return CURLE_BAD_FUNCTION_ARGUMENT;
-      return CURLE_UNSUPPORTED_PROTOCOL;
-    }
-    data->set.httpwant = (unsigned char)arg;
-    break;
+    return setopt_HTTP_VERSION(data, arg);
 
   case CURLOPT_EXPECT_100_TIMEOUT_MS:
     /*
@@ -687,7 +768,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     data->set.proxy_transfer_mode = (bool)uarg;
     break;
   case CURLOPT_SOCKS5_AUTH:
-    if(data->set.socks5auth & ~(CURLAUTH_BASIC | CURLAUTH_GSSAPI))
+    if(uarg & ~(CURLAUTH_BASIC | CURLAUTH_GSSAPI))
       return CURLE_NOT_BUILT_IN;
     data->set.socks5auth = (unsigned char)uarg;
     break;
@@ -1127,12 +1208,8 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     /*
      * disable libcurl transfer encoding is used
      */
-#ifndef USE_HYPER
     data->set.http_te_skip = !enabled; /* reversed */
     break;
-#else
-    return CURLE_NOT_BUILT_IN; /* hyper does not support */
-#endif
 
   case CURLOPT_HTTP_CONTENT_DECODING:
     /*
@@ -1202,63 +1279,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     break;
 #ifndef CURL_DISABLE_RTSP
   case CURLOPT_RTSP_REQUEST:
-  {
-    /*
-     * Set the RTSP request method (OPTIONS, SETUP, PLAY, etc...)
-     * Would this be better if the RTSPREQ_* were just moved into here?
-     */
-    Curl_RtspReq rtspreq = RTSPREQ_NONE;
-    switch(arg) {
-    case CURL_RTSPREQ_OPTIONS:
-      rtspreq = RTSPREQ_OPTIONS;
-      break;
-
-    case CURL_RTSPREQ_DESCRIBE:
-      rtspreq = RTSPREQ_DESCRIBE;
-      break;
-
-    case CURL_RTSPREQ_ANNOUNCE:
-      rtspreq = RTSPREQ_ANNOUNCE;
-      break;
-
-    case CURL_RTSPREQ_SETUP:
-      rtspreq = RTSPREQ_SETUP;
-      break;
-
-    case CURL_RTSPREQ_PLAY:
-      rtspreq = RTSPREQ_PLAY;
-      break;
-
-    case CURL_RTSPREQ_PAUSE:
-      rtspreq = RTSPREQ_PAUSE;
-      break;
-
-    case CURL_RTSPREQ_TEARDOWN:
-      rtspreq = RTSPREQ_TEARDOWN;
-      break;
-
-    case CURL_RTSPREQ_GET_PARAMETER:
-      rtspreq = RTSPREQ_GET_PARAMETER;
-      break;
-
-    case CURL_RTSPREQ_SET_PARAMETER:
-      rtspreq = RTSPREQ_SET_PARAMETER;
-      break;
-
-    case CURL_RTSPREQ_RECORD:
-      rtspreq = RTSPREQ_RECORD;
-      break;
-
-    case CURL_RTSPREQ_RECEIVE:
-      rtspreq = RTSPREQ_RECEIVE;
-      break;
-    default:
-      return CURLE_BAD_FUNCTION_ARGUMENT;
-    }
-
-    data->set.rtspreq = rtspreq;
-    break;
-  }
+    return setopt_RTSP_REQUEST(data, arg);
   case CURLOPT_RTSP_CLIENT_CSEQ:
     /*
      * Set the CSEQ number to issue for the next RTSP request. Useful if the
@@ -1386,7 +1407,8 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
 #endif /* ! CURL_DISABLE_ALTSVC */
 #ifndef CURL_DISABLE_WEBSOCKETS
   case CURLOPT_WS_OPTIONS:
-    data->set.ws_raw_mode =  (bool)(arg & CURLWS_RAW_MODE);
+    data->set.ws_raw_mode = (bool)(arg & CURLWS_RAW_MODE);
+    data->set.ws_no_auto_pong = (bool)(arg & CURLWS_NOAUTOPONG);
     break;
 #endif
   case CURLOPT_QUICK_EXIT:
@@ -1401,7 +1423,9 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
      */
     Curl_safefree(data->set.str[STRING_SSL_ENGINE]);
     return Curl_ssl_set_engine_default(data);
-
+  case CURLOPT_UPLOAD_FLAGS:
+    data->set.upload_flags = (unsigned char)arg;
+    break;
   default:
     /* unknown option */
     return CURLE_UNKNOWN_OPTION;
@@ -1529,7 +1553,7 @@ static CURLcode setopt_pointers(struct Curl_easy *data, CURLoption option,
 #if !defined(CURL_DISABLE_HTTP) || !defined(CURL_DISABLE_SMTP) ||       \
     !defined(CURL_DISABLE_IMAP)
 # ifndef CURL_DISABLE_MIME
-    case CURLOPT_MIMEPOST:
+  case CURLOPT_MIMEPOST:
     /*
      * Set to make us do MIME POST
      */
@@ -1565,11 +1589,6 @@ static CURLcode setopt_pointers(struct Curl_easy *data, CURLoption option,
     if(data->share) {
       Curl_share_lock(data, CURL_LOCK_DATA_SHARE, CURL_LOCK_ACCESS_SINGLE);
 
-      if(data->dns.hostcachetype == HCACHE_SHARED) {
-        data->dns.hostcache = NULL;
-        data->dns.hostcachetype = HCACHE_NONE;
-      }
-
 #if !defined(CURL_DISABLE_HTTP) && !defined(CURL_DISABLE_COOKIES)
       if(data->share->cookies == data->cookies)
         data->cookies = NULL;
@@ -1599,11 +1618,6 @@ static CURLcode setopt_pointers(struct Curl_easy *data, CURLoption option,
 
       data->share->dirty++;
 
-      if(data->share->specifier & (1 << CURL_LOCK_DATA_DNS)) {
-        /* use shared host cache */
-        data->dns.hostcache = &data->share->hostcache;
-        data->dns.hostcachetype = HCACHE_SHARED;
-      }
 #if !defined(CURL_DISABLE_HTTP) && !defined(CURL_DISABLE_COOKIES)
       if(data->share->cookies) {
         /* use shared cookie list, first free own one if any */
@@ -1657,8 +1671,8 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     if(Curl_ssl_supports(data, SSLSUPP_CIPHER_LIST))
       /* set a list of cipher we want to use in the SSL connection */
       return Curl_setstropt(&data->set.str[STRING_SSL_CIPHER_LIST], ptr);
-    return CURLE_NOT_BUILT_IN;
-    break;
+    else
+      return CURLE_NOT_BUILT_IN;
 #ifndef CURL_DISABLE_PROXY
   case CURLOPT_PROXY_SSL_CIPHER_LIST:
     if(Curl_ssl_supports(data, SSLSUPP_CIPHER_LIST)) {
@@ -1668,7 +1682,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     }
     else
       return CURLE_NOT_BUILT_IN;
-    break;
 #endif
   case CURLOPT_TLS13_CIPHERS:
     if(Curl_ssl_supports(data, SSLSUPP_TLS13_CIPHERSUITES)) {
@@ -1677,7 +1690,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     }
     else
       return CURLE_NOT_BUILT_IN;
-    break;
 #ifndef CURL_DISABLE_PROXY
   case CURLOPT_PROXY_TLS13_CIPHERS:
     if(Curl_ssl_supports(data, SSLSUPP_TLS13_CIPHERSUITES))
@@ -1686,7 +1698,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
                             ptr);
     else
       return CURLE_NOT_BUILT_IN;
-    break;
 #endif
   case CURLOPT_RANDOM_FILE:
     break;
@@ -1939,7 +1950,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * to decide for us (if CURLOPT_SOCKS_PROXY setting it to NULL).
      */
     return Curl_setstropt(&data->set.str[STRING_PROXY], ptr);
-    break;
 
   case CURLOPT_PRE_PROXY:
     /*
@@ -1964,7 +1974,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * Set authentication service name for DIGEST-MD5, Kerberos 5 and SPNEGO
      */
     return Curl_setstropt(&data->set.str[STRING_SERVICE_NAME], ptr);
-    break;
 
   case CURLOPT_HEADERDATA:
     /*
@@ -2016,12 +2025,13 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * Set a SSL_CTX callback parameter pointer
      */
 #ifdef USE_SSL
-    if(Curl_ssl_supports(data, SSLSUPP_SSL_CTX))
+    if(Curl_ssl_supports(data, SSLSUPP_SSL_CTX)) {
       data->set.ssl.fsslctxp = ptr;
+      break;
+    }
     else
 #endif
       return CURLE_NOT_BUILT_IN;
-    break;
   case CURLOPT_SOCKOPTDATA:
     /*
      * socket callback data pointer. Might be NULL.
@@ -2141,12 +2151,16 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     result = setstropt_userpwd(ptr, &u, &p);
 
     /* URL decode the components */
-    if(!result && u)
+    if(!result && u) {
+      Curl_safefree(data->set.str[STRING_PROXYUSERNAME]);
       result = Curl_urldecode(u, 0, &data->set.str[STRING_PROXYUSERNAME], NULL,
                               REJECT_ZERO);
-    if(!result && p)
+    }
+    if(!result && p) {
+      Curl_safefree(data->set.str[STRING_PROXYPASSWORD]);
       result = Curl_urldecode(p, 0, &data->set.str[STRING_PROXYPASSWORD], NULL,
                               REJECT_ZERO);
+    }
     free(u);
     free(p);
   }
@@ -2215,6 +2229,7 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * String that holds file type of the SSL certificate to use for proxy
      */
     return Curl_setstropt(&data->set.str[STRING_CERT_TYPE_PROXY], ptr);
+
 #endif
   case CURLOPT_SSLKEY:
     /*
@@ -2235,7 +2250,7 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * String that holds file type of the SSL key to use
      */
     return Curl_setstropt(&data->set.str[STRING_KEY_TYPE], ptr);
-    break;
+
 #ifndef CURL_DISABLE_PROXY
   case CURLOPT_PROXY_SSLKEYTYPE:
     /*
@@ -2256,6 +2271,7 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * String that holds the SSL private key password for proxy.
      */
     return Curl_setstropt(&data->set.str[STRING_KEY_PASSWD_PROXY], ptr);
+
 #endif
   case CURLOPT_SSLENGINE:
     /*
@@ -2278,6 +2294,7 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     /* enable the HAProxy protocol */
     data->set.haproxyprotocol = TRUE;
     break;
+
 #endif
   case CURLOPT_INTERFACE:
     /*
@@ -2326,8 +2343,8 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * CA certificate
      */
     return Curl_setstropt(&data->set.str[STRING_SSL_CAFILE_PROXY], ptr);
-#endif
 
+#endif
   case CURLOPT_CAPATH:
     /*
      * Set CA path info for SSL connection. Specify directory name of the CA
@@ -2366,6 +2383,7 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * CRL to check certificates revocation
      */
     return Curl_setstropt(&data->set.str[STRING_SSL_CRLFILE_PROXY], ptr);
+
 #endif
   case CURLOPT_ISSUERCERT:
     /*
@@ -2383,7 +2401,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     return Curl_setstropt(&data->set.str[STRING_SSL_ISSUERCERT_PROXY], ptr);
 
 #endif
-
   case CURLOPT_PRIVATE:
     /*
      * Set private data pointer.
@@ -2398,6 +2415,16 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * Specify colon-delimited list of curve algorithm names.
      */
     return Curl_setstropt(&data->set.str[STRING_SSL_EC_CURVES], ptr);
+
+  case CURLOPT_SSL_SIGNATURE_ALGORITHMS:
+    /*
+     * Set accepted signature algorithms.
+     * Specify colon-delimited list of signature scheme names.
+     */
+    if(Curl_ssl_supports(data, SSLSUPP_SIGNATURE_ALGORITHMS))
+      return Curl_setstropt(&data->set.str[STRING_SSL_SIGNATURE_ALGORITHMS],
+                            ptr);
+    return CURLE_NOT_BUILT_IN;
 #endif
 #ifdef USE_SSH
   case CURLOPT_SSH_PUBLIC_KEYFILE:
@@ -2476,7 +2503,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     /* Set the SMTP auth originator */
     return Curl_setstropt(&data->set.str[STRING_MAIL_AUTH], ptr);
 #endif
-
   case CURLOPT_SASL_AUTHZID:
     /* Authorization identity (identity to act as) */
     return Curl_setstropt(&data->set.str[STRING_SASL_AUTHZID], ptr);
@@ -2495,7 +2521,6 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
      * for generic server options, the application will need to set this.
      */
     return Curl_setstropt(&data->set.str[STRING_RTSP_STREAM_URI], ptr);
-    break;
 
   case CURLOPT_RTSP_TRANSPORT:
     /*
@@ -2542,30 +2567,30 @@ static CURLcode setopt_cptr(struct Curl_easy *data, CURLoption option,
     break;
 #endif
 #endif
-#ifdef USE_ARES
+#ifdef CURLRES_ARES
   case CURLOPT_DNS_SERVERS:
     result = Curl_setstropt(&data->set.str[STRING_DNS_SERVERS], ptr);
     if(result)
       return result;
-    return Curl_set_dns_servers(data, data->set.str[STRING_DNS_SERVERS]);
+    return Curl_async_ares_set_dns_servers(data);
 
   case CURLOPT_DNS_INTERFACE:
     result = Curl_setstropt(&data->set.str[STRING_DNS_INTERFACE], ptr);
     if(result)
       return result;
-    return Curl_set_dns_interface(data, data->set.str[STRING_DNS_INTERFACE]);
+    return Curl_async_ares_set_dns_interface(data);
 
   case CURLOPT_DNS_LOCAL_IP4:
     result = Curl_setstropt(&data->set.str[STRING_DNS_LOCAL_IP4], ptr);
     if(result)
       return result;
-    return Curl_set_dns_local_ip4(data, data->set.str[STRING_DNS_LOCAL_IP4]);
+    return Curl_async_ares_set_dns_local_ip4(data);
 
   case CURLOPT_DNS_LOCAL_IP6:
     result = Curl_setstropt(&data->set.str[STRING_DNS_LOCAL_IP6], ptr);
     if(result)
       return result;
-    return Curl_set_dns_local_ip6(data, data->set.str[STRING_DNS_LOCAL_IP6]);
+    return Curl_async_ares_set_dns_local_ip6(data);
 
 #endif
 #ifdef USE_UNIX_SOCKETS
@@ -2765,12 +2790,13 @@ static CURLcode setopt_func(struct Curl_easy *data, CURLoption option,
      * Set a SSL_CTX callback
      */
 #ifdef USE_SSL
-    if(Curl_ssl_supports(data, SSLSUPP_SSL_CTX))
+    if(Curl_ssl_supports(data, SSLSUPP_SSL_CTX)) {
       data->set.ssl.fsslctx = va_arg(param, curl_ssl_ctx_callback);
+      break;
+    }
     else
 #endif
       return CURLE_NOT_BUILT_IN;
-    break;
 
   case CURLOPT_SOCKOPTFUNCTION:
     /*
@@ -2802,7 +2828,6 @@ static CURLcode setopt_func(struct Curl_easy *data, CURLoption option,
      */
     data->set.resolver_start = va_arg(param, curl_resolver_start_callback);
     break;
-
 
 #ifdef USE_SSH
 #ifdef USE_LIBSSH2
@@ -3068,9 +3093,7 @@ CURLcode curl_easy_setopt(CURL *d, CURLoption tag, ...)
   result = Curl_vsetopt(data, tag, arg);
 
   va_end(arg);
-#ifdef DEBUGBUILD
   if(result == CURLE_BAD_FUNCTION_ARGUMENT)
-    infof(data, "setopt arg 0x%x returned CURLE_BAD_FUNCTION_ARGUMENT", tag);
-#endif
+    failf(data, "setopt 0x%x got bad argument", tag);
   return result;
 }

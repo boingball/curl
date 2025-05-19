@@ -29,7 +29,7 @@
  * but vtls.c should ever call or use these functions.
  */
 
-#include "curl_setup.h"
+#include "../curl_setup.h"
 
 #ifdef USE_SCHANNEL
 
@@ -42,25 +42,25 @@
 #include "vtls.h"
 #include "vtls_int.h"
 #include "vtls_scache.h"
-#include "strcase.h"
-#include "sendf.h"
-#include "connect.h" /* for the connect timeout */
-#include "strerror.h"
-#include "select.h" /* for the socket readiness */
-#include "inet_pton.h" /* for IP addr SNI check */
-#include "curl_multibyte.h"
-#include "warnless.h"
+#include "../strcase.h"
+#include "../sendf.h"
+#include "../connect.h" /* for the connect timeout */
+#include "../strerror.h"
+#include "../select.h" /* for the socket readiness */
+#include "../curlx/inet_pton.h" /* for IP addr SNI check */
+#include "../curlx/multibyte.h"
+#include "../curlx/warnless.h"
 #include "x509asn1.h"
-#include "curl_printf.h"
-#include "multiif.h"
-#include "system_win32.h"
-#include "version_win32.h"
-#include "rand.h"
-#include "strparse.h"
+#include "../curl_printf.h"
+#include "../multiif.h"
+#include "../system_win32.h"
+#include "../curlx/version_win32.h"
+#include "../rand.h"
+#include "../curlx/strparse.h"
 
 /* The last #include file should be: */
-#include "curl_memory.h"
-#include "memdebug.h"
+#include "../curl_memory.h"
+#include "../memdebug.h"
 
 /* Some verbose debug messages are wrapped by SCH_DEV() instead of DEBUGF()
  * and only shown if CURL_SCHANNEL_DEV_DEBUG was defined at build time. These
@@ -149,6 +149,10 @@
 
 #ifndef PKCS12_NO_PERSIST_KEY
 #define PKCS12_NO_PERSIST_KEY 0x00008000
+#endif
+
+#ifndef CERT_FIND_HAS_PRIVATE_KEY
+#define CERT_FIND_HAS_PRIVATE_KEY (21 << CERT_COMPARE_SHIFT)
 #endif
 
 /* ALPN requires version 8.1 of the Windows SDK, which was
@@ -377,7 +381,7 @@ set_ssl_ciphers(SCHANNEL_CRED *schannel_cred, char *ciphers,
   int algCount = 0;
   while(startCur && (0 != *startCur) && (algCount < NUM_CIPHERS)) {
     curl_off_t alg;
-    if(Curl_str_number(&startCur, &alg, INT_MAX) || !alg)
+    if(curlx_str_number(&startCur, &alg, INT_MAX) || !alg)
       alg = get_alg_id_by_name(startCur);
 
     if(alg)
@@ -611,6 +615,7 @@ schannel_acquire_credential_handle(struct Curl_cfilter *cf,
       WCHAR* pszPassword;
       size_t pwd_len = 0;
       int str_w_len = 0;
+      int cert_find_flags;
       const char *cert_showfilename_error = blob ?
         "(memory blob)" : data->set.ssl.primary.clientcert;
       curlx_unicodefree(cert_path);
@@ -682,9 +687,17 @@ schannel_acquire_credential_handle(struct Curl_cfilter *cf,
         return CURLE_SSL_CERTPROBLEM;
       }
 
+      /* CERT_FIND_HAS_PRIVATE_KEY is only available in Windows 8 / Server
+         2012, (NT v6.2). For earlier versions we use CURL_FIND_ANY. */
+      if(curlx_verify_windows_version(6, 2, 0, PLATFORM_WINNT,
+                                      VERSION_GREATER_THAN_EQUAL))
+        cert_find_flags = CERT_FIND_HAS_PRIVATE_KEY;
+      else
+        cert_find_flags = CERT_FIND_ANY;
+
       client_certs[0] = CertFindCertificateInStore(
         cert_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
-        CERT_FIND_ANY, NULL, NULL);
+        cert_find_flags, NULL, NULL);
 
       if(!client_certs[0]) {
         failf(data, "schannel: Failed to get certificate from file %s"
@@ -806,11 +819,12 @@ schannel_acquire_credential_handle(struct Curl_cfilter *cf,
 #endif
 
     sspi_status =
-      Curl_pSecFn->AcquireCredentialsHandle(NULL, (TCHAR*)UNISP_NAME,
-                                         SECPKG_CRED_OUTBOUND, NULL,
-                                         &credentials, NULL, NULL,
-                                         &backend->cred->cred_handle,
-                                         &backend->cred->time_stamp);
+      Curl_pSecFn->AcquireCredentialsHandle(NULL,
+                                            (TCHAR *)CURL_UNCONST(UNISP_NAME),
+                                            SECPKG_CRED_OUTBOUND, NULL,
+                                            &credentials, NULL, NULL,
+                                            &backend->cred->cred_handle,
+                                            &backend->cred->time_stamp);
   }
   else {
     /* Pre-Windows 10 1809 or the user set a legacy algorithm list.
@@ -846,11 +860,12 @@ schannel_acquire_credential_handle(struct Curl_cfilter *cf,
 #endif
 
     sspi_status =
-      Curl_pSecFn->AcquireCredentialsHandle(NULL, (TCHAR*)UNISP_NAME,
-                                         SECPKG_CRED_OUTBOUND, NULL,
-                                         &schannel_cred, NULL, NULL,
-                                         &backend->cred->cred_handle,
-                                         &backend->cred->time_stamp);
+      Curl_pSecFn->AcquireCredentialsHandle(NULL,
+                                            (TCHAR *)CURL_UNCONST(UNISP_NAME),
+                                            SECPKG_CRED_OUTBOUND, NULL,
+                                            &schannel_cred, NULL, NULL,
+                                            &backend->cred->cred_handle,
+                                            &backend->cred->time_stamp);
   }
 
 #ifdef HAS_CLIENT_CERT_PATH
@@ -898,7 +913,6 @@ schannel_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
   unsigned char alpn_buffer[128];
 #endif
   SECURITY_STATUS sspi_status = SEC_E_OK;
-  struct Curl_schannel_cred *old_cred = NULL;
   CURLcode result;
 
   DEBUGASSERT(backend);
@@ -955,9 +969,10 @@ schannel_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
 
   /* check for an existing reusable credential handle */
   if(ssl_config->primary.cache_session) {
+    struct Curl_schannel_cred *old_cred;
     Curl_ssl_scache_lock(data);
-    if(Curl_ssl_scache_get_obj(cf, data, connssl->peer.scache_key,
-                               (void **)&old_cred)) {
+    old_cred = Curl_ssl_scache_get_obj(cf, data, connssl->peer.scache_key);
+    if(old_cred) {
       backend->cred = old_cred;
       DEBUGF(infof(data, "schannel: reusing existing credential handle"));
 
@@ -973,7 +988,7 @@ schannel_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
   if(!backend->cred) {
     char *snihost;
     result = schannel_acquire_credential_handle(cf, data);
-    if(result)
+    if(result || !backend->cred)
       return result;
     /* schannel_acquire_credential_handle() sets backend->cred accordingly or
        it returns error otherwise. */
@@ -1629,6 +1644,7 @@ schannel_connect_step3(struct Curl_cfilter *cf, struct Curl_easy *data)
       args.data = data;
       args.idx = 0;
       args.certs_count = certs_count;
+      args.result = CURLE_OK;
       traverse_cert_store(ccert_context, add_cert_to_certinfo, &args);
       result = args.result;
     }
@@ -1939,7 +1955,6 @@ schannel_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
                                     backend->encdata_offset),
                               size, err);
     if(*err) {
-      nread = -1;
       if(*err == CURLE_AGAIN)
         SCH_DEV(infof(data, "schannel: recv returned CURLE_AGAIN"));
       else if(*err == CURLE_RECV_ERROR)
@@ -2534,7 +2549,7 @@ static void schannel_checksum(const unsigned char *input,
 
 #ifdef __MINGW32CE__
     /* workaround for CeGCC, should be (const BYTE*) */
-    if(!CryptHashData(hHash, (BYTE*)input, (DWORD)inputlen, 0))
+    if(!CryptHashData(hHash, (BYTE*)CURL_UNCONST(input), (DWORD)inputlen, 0))
 #else
     if(!CryptHashData(hHash, input, (DWORD)inputlen, 0))
 #endif
@@ -2601,7 +2616,7 @@ HCERTSTORE Curl_schannel_get_cached_cert_store(struct Curl_cfilter *cf,
   }
 
   share = Curl_hash_pick(&multi->proto_hash,
-                         (void *)MPROTO_SCHANNEL_CERT_SHARE_KEY,
+                         CURL_UNCONST(MPROTO_SCHANNEL_CERT_SHARE_KEY),
                          sizeof(MPROTO_SCHANNEL_CERT_SHARE_KEY)-1);
   if(!share || !share->cert_store) {
     return NULL;
@@ -2617,8 +2632,8 @@ HCERTSTORE Curl_schannel_get_cached_cert_store(struct Curl_cfilter *cf,
      negative timeout means retain forever. */
   timeout_ms = cfg->ca_cache_timeout * (timediff_t)1000;
   if(timeout_ms >= 0) {
-    now = Curl_now();
-    elapsed_ms = Curl_timediff(now, share->time);
+    now = curlx_now();
+    elapsed_ms = curlx_timediff(now, share->time);
     if(elapsed_ms >= timeout_ms) {
       return NULL;
     }
@@ -2679,7 +2694,7 @@ bool Curl_schannel_set_cached_cert_store(struct Curl_cfilter *cf,
   }
 
   share = Curl_hash_pick(&multi->proto_hash,
-                         (void *)MPROTO_SCHANNEL_CERT_SHARE_KEY,
+                         CURL_UNCONST(MPROTO_SCHANNEL_CERT_SHARE_KEY),
                          sizeof(MPROTO_SCHANNEL_CERT_SHARE_KEY)-1);
   if(!share) {
     share = calloc(1, sizeof(*share));
@@ -2687,7 +2702,7 @@ bool Curl_schannel_set_cached_cert_store(struct Curl_cfilter *cf,
       return FALSE;
     }
     if(!Curl_hash_add2(&multi->proto_hash,
-                       (void *)MPROTO_SCHANNEL_CERT_SHARE_KEY,
+                       CURL_UNCONST(MPROTO_SCHANNEL_CERT_SHARE_KEY),
                        sizeof(MPROTO_SCHANNEL_CERT_SHARE_KEY)-1,
                        share, schannel_cert_share_free)) {
       free(share);
@@ -2717,7 +2732,7 @@ bool Curl_schannel_set_cached_cert_store(struct Curl_cfilter *cf,
   }
   free(share->CAfile);
 
-  share->time = Curl_now();
+  share->time = curlx_now();
   share->cert_store = cert_store;
   share->CAinfo_blob_size = CAinfo_blob_size;
   share->CAfile = CAfile;

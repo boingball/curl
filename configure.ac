@@ -49,6 +49,7 @@ CURL_CHECK_OPTION_OPTIMIZE
 CURL_CHECK_OPTION_WARNINGS
 CURL_CHECK_OPTION_WERROR
 CURL_CHECK_OPTION_CURLDEBUG
+AM_CONDITIONAL(CURLDEBUG, test x$want_curldebug = xyes)
 CURL_CHECK_OPTION_SYMBOL_HIDING
 CURL_CHECK_OPTION_ARES
 CURL_CHECK_OPTION_RT
@@ -150,7 +151,7 @@ dnl initialize all the info variables
     curl_gss_msg="no      (--with-gssapi)"
   curl_gsasl_msg="no      (--with-gsasl)"
 curl_tls_srp_msg="no      (--enable-tls-srp)"
-    curl_res_msg="default (--enable-ares / --enable-threaded-resolver)"
+    curl_res_msg="blocking (--enable-ares / --enable-threaded-resolver)"
    curl_ipv6_msg="no      (--enable-ipv6)"
 curl_unix_sockets_msg="no      (--enable-unix-sockets)"
     curl_idn_msg="no      (--with-{libidn2,winidn})"
@@ -298,27 +299,39 @@ TEST_NGHTTPX=nghttpx
 AC_ARG_WITH(test-nghttpx,dnl
 AS_HELP_STRING([--with-test-nghttpx=PATH],[where to find nghttpx for testing]),
   TEST_NGHTTPX=$withval
-  if test X"$OPT_TEST_NGHTTPX" = "Xno"; then
+  if test X"$TEST_NGHTTPX" = "Xno"; then
     TEST_NGHTTPX=""
   fi
 )
 AC_SUBST(TEST_NGHTTPX)
 
-CADDY=/usr/bin/caddy
+if test -x /usr/bin/caddy; then
+  CADDY=/usr/bin/caddy
+elif test -x /usr/local/bin/caddy; then
+  CADDY=/usr/local/bin/caddy
+elif test -x `brew --prefix`/bin/caddy; then
+  CADDY=`brew --prefix`/bin/caddy
+fi
 AC_ARG_WITH(test-caddy,dnl
 AS_HELP_STRING([--with-test-caddy=PATH],[where to find caddy for testing]),
   CADDY=$withval
-  if test X"$OPT_CADDY" = "Xno"; then
+  if test X"$CADDY" = "Xno"; then
     CADDY=""
   fi
 )
 AC_SUBST(CADDY)
 
-VSFTPD=/usr/sbin/vsftpd
+if test -x /usr/sbin/vsftpd; then
+  VSFTPD=/usr/sbin/vsftpd
+elif test -x /usr/local/sbin/vsftpd; then
+  VSFTPD=/usr/local/sbin/vsftpd
+elif test -x `brew --prefix`/sbin/vsftpd; then
+  VSFTPD=`brew --prefix`/sbin/vsftpd
+fi
 AC_ARG_WITH(test-vsftpd,dnl
 AS_HELP_STRING([--with-test-vsftpd=PATH],[where to find vsftpd for testing]),
   VSFTPD=$withval
-  if test X"$OPT_VSFTPD" = "Xno"; then
+  if test X"$VSFTPD" = "Xno"; then
     VSFTPD=""
   fi
 )
@@ -571,22 +584,34 @@ case $host_os in
     ;;
 esac
 
-# In order to detect support of sendmmsg(), we need to escape the POSIX
+AM_CONDITIONAL(BUILD_UNITTESTS, test x$supports_unittests = xyes)
+
+# In order to detect support of sendmmsg() and accept4(), we need to escape the POSIX
 # jail by defining _GNU_SOURCE or <sys/socket.h> will not expose it.
 case $host_os in
-  linux*)
+  linux*|cygwin*|msys*)
     CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE"
     ;;
 esac
 
-dnl Build unit tests when option --enable-debug is given.
-if test "x$want_debug" = "xyes" &&
-   test "x$supports_unittests" = "xyes"; then
-  want_unittests=yes
-else
-  want_unittests=no
-fi
-AM_CONDITIONAL(BUILD_UNITTESTS, test x$want_unittests = xyes)
+dnl Apply curl debug options to test servers
+OPT_SERVER_DEBUG="default"
+AC_ARG_ENABLE(server-debug,
+AS_HELP_STRING([--enable-server-debug],[Enable debug options for test servers])
+AS_HELP_STRING([--disable-server-debug],[Disable debug options for test servers]),
+OPT_SERVER_DEBUG=$enableval)
+case "$OPT_SERVER_DEBUG" in
+  no)
+    dnl --disable-server-debug option used
+    want_server_debug="no"
+    ;;
+  *)
+    dnl --enable-server-debug option used or not specified
+    want_server_debug="no"
+    ;;
+esac
+AC_MSG_RESULT([$want_server_debug])
+AM_CONDITIONAL(ENABLE_SERVER_DEBUG, test x$want_server_debug = xyes)
 
 dnl **********************************************************************
 dnl Compilation based checks should not be done before this point.
@@ -609,6 +634,7 @@ curl_cv_cygwin='no'
 case $host_os in
   cygwin*|msys*) curl_cv_cygwin='yes';;
 esac
+AM_CONDITIONAL(DOING_CYGWIN, test "x$curl_cv_cygwin" = xyes)
 
 AM_CONDITIONAL([HAVE_WINDRES],
   [test "$curl_cv_native_windows" = "yes" && test -n "${RC}"])
@@ -1522,7 +1548,7 @@ if test X"$OPT_BROTLI" != Xno; then
         AC_MSG_NOTICE([Added $DIR_BROTLI to CURL_LIBRARY_PATH])
       fi
     fi
-    LIBCURL_PC_REQUIRES_PRIVATE="$LIBCURL_PC_REQUIRES_PRIVATE libbrotlidec"
+    LIBCURL_PC_REQUIRES_PRIVATE="$LIBCURL_PC_REQUIRES_PRIVATE libbrotlidec libbrotlicommon"
   else
     dnl no brotli, revert back to clean variables
     LDFLAGS=$CLEANLDFLAGS
@@ -3141,7 +3167,8 @@ if test X"$want_tcp2" != Xno; then
   fi
 fi
 
-if test "x$USE_NGTCP2" = "x1" -a "x$OPENSSL_ENABLED" = "x1" -a "x$OPENSSL_IS_BORINGSSL" != "x1"; then
+if test "x$USE_NGTCP2" = "x1" -a "x$OPENSSL_ENABLED" = "x1" -a \
+   "x$OPENSSL_IS_BORINGSSL" != "x1" -a "x$OPENSSL_QUIC_API2" != "x1"; then
   dnl backup the pre-ngtcp2_crypto_quictls variables
   CLEANLDFLAGS="$LDFLAGS"
   CLEANLDFLAGSPC="$LDFLAGSPC"
@@ -3194,6 +3221,65 @@ if test "x$USE_NGTCP2" = "x1" -a "x$OPENSSL_ENABLED" = "x1" -a "x$OPENSSL_IS_BOR
       dnl To avoid link errors, we do not allow --with-ngtcp2 without
       dnl a pkgconfig file
       AC_MSG_ERROR([--with-ngtcp2 was specified but could not find ngtcp2_crypto_quictls pkg-config file.])
+    fi
+  fi
+fi
+
+if test "x$USE_NGTCP2" = "x1" -a "x$OPENSSL_ENABLED" = "x1" -a \
+   "x$OPENSSL_IS_BORINGSSL" != "x1" -a "x$OPENSSL_QUIC_API2" = "x1"; then
+  dnl backup the pre-ngtcp2_crypto_ossl variables
+  CLEANLDFLAGS="$LDFLAGS"
+  CLEANLDFLAGSPC="$LDFLAGSPC"
+  CLEANCPPFLAGS="$CPPFLAGS"
+  CLEANLIBS="$LIBS"
+
+  CURL_CHECK_PKGCONFIG(libngtcp2_crypto_ossl, $want_tcp2_path)
+
+  if test "$PKGCONFIG" != "no"; then
+    LIB_NGTCP2_CRYPTO_QUICTLS=`CURL_EXPORT_PCDIR([$want_tcp2_path])
+      $PKGCONFIG --libs-only-l libngtcp2_crypto_ossl`
+    AC_MSG_NOTICE([-l is $LIB_NGTCP2_CRYPTO_QUICTLS])
+
+    CPP_NGTCP2_CRYPTO_QUICTLS=`CURL_EXPORT_PCDIR([$want_tcp2_path]) dnl
+      $PKGCONFIG --cflags-only-I libngtcp2_crypto_ossl`
+    AC_MSG_NOTICE([-I is $CPP_NGTCP2_CRYPTO_QUICTLS])
+
+    LD_NGTCP2_CRYPTO_QUICTLS=`CURL_EXPORT_PCDIR([$want_tcp2_path])
+      $PKGCONFIG --libs-only-L libngtcp2_crypto_ossl`
+    AC_MSG_NOTICE([-L is $LD_NGTCP2_CRYPTO_QUICTLS])
+
+    LDFLAGS="$LDFLAGS $LD_NGTCP2_CRYPTO_QUICTLS"
+    LDFLAGSPC="$LDFLAGSPC $LD_NGTCP2_CRYPTO_QUICTLS"
+    CPPFLAGS="$CPPFLAGS $CPP_NGTCP2_CRYPTO_QUICTLS"
+    LIBS="$LIB_NGTCP2_CRYPTO_QUICTLS $LIBS"
+
+    if test "x$cross_compiling" != "xyes"; then
+      DIR_NGTCP2_CRYPTO_QUICTLS=`echo $LD_NGTCP2_CRYPTO_QUICTLS | $SED -e 's/^-L//'`
+    fi
+    AC_CHECK_LIB(ngtcp2_crypto_ossl, ngtcp2_crypto_recv_client_initial_cb,
+      [
+        AC_CHECK_HEADERS(ngtcp2/ngtcp2_crypto.h,
+          USE_NGTCP2=1
+          CURL_LIBRARY_PATH="$CURL_LIBRARY_PATH:$DIR_NGTCP2_CRYPTO_QUICTLS"
+          export CURL_LIBRARY_PATH
+          AC_MSG_NOTICE([Added $DIR_NGTCP2_CRYPTO_QUICTLS to CURL_LIBRARY_PATH])
+          LIBCURL_PC_REQUIRES_PRIVATE="$LIBCURL_PC_REQUIRES_PRIVATE libngtcp2_crypto_ossl"
+          AC_DEFINE(OPENSSL_QUIC_API2, 1, [openssl with new QUIC API])
+        )
+      ],
+        dnl not found, revert back to clean variables
+        LDFLAGS=$CLEANLDFLAGS
+        LDFLAGSPC=$CLEANLDFLAGSPC
+        CPPFLAGS=$CLEANCPPFLAGS
+        LIBS=$CLEANLIBS
+    )
+
+  else
+    dnl no ngtcp2_crypto_ossl pkg-config found, deal with it
+    if test X"$want_tcp2" != Xdefault; then
+      dnl To avoid link errors, we do not allow --with-ngtcp2 without
+      dnl a pkgconfig file
+      AC_MSG_ERROR([--with-ngtcp2 was specified but could not find ngtcp2_crypto_ossl pkg-config file.])
     fi
   fi
 fi
@@ -3902,6 +3988,7 @@ AC_CHECK_HEADERS(
   libgen.h \
   locale.h \
   stdbool.h \
+  stdint.h \
   sys/filio.h \
   sys/eventfd.h,
 dnl to do if not found
@@ -4071,12 +4158,10 @@ CURL_CHECK_FUNC_FTRUNCATE
 CURL_CHECK_FUNC_GETADDRINFO
 CURL_CHECK_FUNC_GETHOSTBYNAME_R
 CURL_CHECK_FUNC_GETHOSTNAME
+CURL_CHECK_FUNC_GETIFADDRS
 CURL_CHECK_FUNC_GETPEERNAME
 CURL_CHECK_FUNC_GETSOCKNAME
-CURL_CHECK_FUNC_GETIFADDRS
 CURL_CHECK_FUNC_GMTIME_R
-CURL_CHECK_FUNC_INET_NTOP
-CURL_CHECK_FUNC_INET_PTON
 CURL_CHECK_FUNC_IOCTL
 CURL_CHECK_FUNC_IOCTLSOCKET
 CURL_CHECK_FUNC_IOCTLSOCKET_CAMEL
@@ -4099,6 +4184,7 @@ case $host in
 esac
 
 AC_CHECK_FUNCS([\
+  accept4 \
   eventfd \
   fnmatch \
   geteuid \
@@ -4110,9 +4196,10 @@ AC_CHECK_FUNCS([\
   gettimeofday \
   mach_absolute_time \
   pipe \
+  pipe2 \
   poll \
-  sendmsg \
   sendmmsg \
+  sendmsg \
   setlocale \
   setrlimit \
   snprintf \
@@ -4126,6 +4213,8 @@ if test "$curl_cv_native_windows" != 'yes'; then
     realpath \
     sched_yield \
   ])
+  CURL_CHECK_FUNC_INET_NTOP
+  CURL_CHECK_FUNC_INET_PTON
   CURL_CHECK_FUNC_STRCASECMP
   CURL_CHECK_FUNC_STRCMPI
   CURL_CHECK_FUNC_STRICMP
@@ -4186,11 +4275,6 @@ CURL_CHECK_OPTION_THREADED_RESOLVER
 
 if test "$ipv6" = yes -a "$curl_cv_apple" = 'yes'; then
   CURL_DARWIN_SYSTEMCONFIGURATION
-fi
-
-dnl turn off pthreads if rt is disabled
-if test "$want_threaded_resolver" = "yes" && test "$dontwant_rt" = "yes"; then
-  AC_MSG_ERROR([options --enable-pthreads and --disable-rt are mutually exclusive])
 fi
 
 dnl Windows threaded resolver check
@@ -4871,25 +4955,35 @@ if test "x$want_ech" != "xno"; then
 
   dnl assume NOT and look for sufficient condition
   ECH_ENABLED=0
+  ECH_ENABLED_OPENSSL=0
+  ECH_ENABLED_WOLFSSL=0
+  ECH_ENABLED_RUSTLS=0
   ECH_SUPPORT=''
 
   dnl check for OpenSSL equivalent
   if test "x$OPENSSL_ENABLED" = "x1"; then
     AC_CHECK_FUNCS(SSL_set1_ech_config_list,
-      ECH_SUPPORT="ECH support available via BoringSSL with SSL_set1_ech_config_list"
-      ECH_ENABLED=1)
+      ECH_SUPPORT="$ECH_SUPPORT OpenSSL"
+      ECH_ENABLED_OPENSSL=1)
   fi
   if test "x$WOLFSSL_ENABLED" = "x1"; then
     AC_CHECK_FUNCS(wolfSSL_CTX_GenerateEchConfig,
-      ECH_SUPPORT="ECH support available via wolfSSL with wolfSSL_CTX_GenerateEchConfig"
-      ECH_ENABLED=1)
+      ECH_SUPPORT="$ECH_SUPPORT wolfSSL"
+      ECH_ENABLED_WOLFSSL=1)
+  fi
+  if test "x$RUSTLS_ENABLED" = "x1"; then
+      ECH_SUPPORT="$ECH_SUPPORT rustls-ffi"
+      ECH_ENABLED_RUSTLS=1
   fi
 
   dnl now deal with whatever we found
-  if test "x$ECH_ENABLED" = "x1"; then
+  if test "x$ECH_ENABLED_OPENSSL" = "x1" -o \
+          "x$ECH_ENABLED_WOLFSSL" = "x1" -o \
+          "x$ECH_ENABLED_RUSTLS" = "x1"; then
     AC_DEFINE(USE_ECH, 1, [if ECH support is available])
-    AC_MSG_RESULT($ECH_SUPPORT)
+    AC_MSG_RESULT(ECH support available via:$ECH_SUPPORT)
     experimental="$experimental ECH"
+    ECH_ENABLED=1
     dnl ECH wants HTTPSRR
     want_httpsrr="yes"
   else
@@ -4897,14 +4991,24 @@ if test "x$want_ech" != "xno"; then
   fi
 fi
 
+AC_MSG_CHECKING([whether to enable HTTPS-RR support])
 dnl *************************************************************
 dnl check whether HTTPSRR support if desired
 dnl
 if test "x$want_httpsrr" != "xno"; then
-  AC_MSG_RESULT([HTTPSRR support is enabled])
+  AC_MSG_RESULT([yes])
   AC_DEFINE(USE_HTTPSRR, 1, [enable HTTPS RR support])
   experimental="$experimental HTTPSRR"
   curl_httpsrr_msg="enabled (--disable-httpsrr)"
+else
+  AC_MSG_RESULT([no])
+  # no HTTPSRR wanted
+  if test "$want_threaded_resolver" = "yes"; then
+    # and using the threaded resolver
+    if test "x$USE_ARES" = "x1"; then
+      AC_MSG_ERROR([without HTTPS-RR support, asking for both threaded resolver and c-ares support is ambivalent. Please drop one of them.])
+    fi
+  fi
 fi
 
 
@@ -5111,7 +5215,7 @@ if test "x$CURL_DISABLE_NTLM" != "x1"; then
       -o "x$GNUTLS_ENABLED" = "x1" \
       -o "x$SECURETRANSPORT_ENABLED" = "x1" \
       -o "x$USE_WIN32_CRYPTO" = "x1" \
-      -o "x$WOLFSSL_NTLM" = "x1"; then
+      -o "x$HAVE_WOLFSSL_DES_ECB_ENCRYPT" = "x1"; then
     use_curl_ntlm_core=yes
   fi
 
@@ -5155,7 +5259,7 @@ if test "x$CURL_DISABLE_HTTP" != "x1"; then
         -o "x$MBEDTLS_ENABLED" = "x1"; then
       SUPPORT_FEATURES="$SUPPORT_FEATURES HTTPS-proxy"
       AC_MSG_RESULT([yes])
-    elif test "x$WOLFSSL_ENABLED" = "x1" -a "x$WOLFSSL_BIO" = "x1"; then
+    elif test "x$WOLFSSL_ENABLED" = "x1" -a "x$HAVE_WOLFSSL_BIO_NEW" = "x1"; then
       SUPPORT_FEATURES="$SUPPORT_FEATURES HTTPS-proxy"
       AC_MSG_RESULT([yes])
     else
@@ -5381,11 +5485,11 @@ AC_CONFIG_FILES([\
   tests/config \
   tests/configurehelp.pm \
   tests/certs/Makefile \
-  tests/certs/scripts/Makefile \
   tests/data/Makefile \
   tests/server/Makefile \
   tests/libtest/Makefile \
   tests/unit/Makefile \
+  tests/tunit/Makefile \
   tests/http/config.ini \
   tests/http/Makefile \
   tests/http/clients/Makefile \

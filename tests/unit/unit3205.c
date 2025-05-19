@@ -698,9 +698,9 @@ UNITTEST_START
     if(test->rfc) {
       id = Curl_cipher_suite_lookup_id(test->rfc, strlen(test->rfc));
       if(id != test->id) {
-        fprintf(stderr, "Curl_cipher_suite_lookup_id FAILED for \"%s\", "
-                        "result = 0x%04x, expected = 0x%04x\n",
-                        test->rfc, id, test->id);
+        curl_mfprintf(stderr, "Curl_cipher_suite_lookup_id FAILED for \"%s\", "
+                      "result = 0x%04x, expected = 0x%04x\n",
+                      test->rfc, id, test->id);
         unitfail++;
       }
     }
@@ -709,9 +709,9 @@ UNITTEST_START
     if(test->openssl) {
       id = Curl_cipher_suite_lookup_id(test->openssl, strlen(test->openssl));
       if(id != test->id) {
-        fprintf(stderr, "Curl_cipher_suite_lookup_id FAILED for \"%s\", "
-                        "result = 0x%04x, expected = 0x%04x\n",
-                        test->openssl, id, test->id);
+        curl_mfprintf(stderr, "Curl_cipher_suite_lookup_id FAILED for \"%s\", "
+                      "result = 0x%04x, expected = 0x%04x\n",
+                      test->openssl, id, test->id);
         unitfail++;
       }
     }
@@ -722,10 +722,10 @@ UNITTEST_START
 
     Curl_cipher_suite_get_str(test->id, buf, sizeof(buf), true);
 
-    if(strcmp(buf, expect) != 0) {
-      fprintf(stderr, "Curl_cipher_suite_get_str FAILED for 0x%04x, "
-                      "result = \"%s\", expected = \"%s\"\n",
-                      test->id, buf, expect);
+    if(expect && strcmp(buf, expect) != 0) {
+      curl_mfprintf(stderr, "Curl_cipher_suite_get_str FAILED for 0x%04x, "
+                    "result = \"%s\", expected = \"%s\"\n",
+                    test->id, buf, expect);
       unitfail++;
     }
 
@@ -737,16 +737,16 @@ UNITTEST_START
 
     /* suites matched by EDH alias will return the DHE name */
     if(test->id >= 0x0011 && test->id < 0x0017) {
-      if(memcmp(expect, "EDH-", 4) == 0)
+      if(expect && memcmp(expect, "EDH-", 4) == 0)
         expect = (char *) memcpy(strcpy(alt, expect), "DHE-", 4);
-      if(memcmp(expect + 4, "EDH-", 4) == 0)
+      if(expect && memcmp(expect + 4, "EDH-", 4) == 0)
         expect = (char *) memcpy(strcpy(alt, expect) + 4, "DHE-", 4) - 4;
     }
 
-    if(strcmp(buf, expect) != 0) {
-      fprintf(stderr, "Curl_cipher_suite_get_str FAILED for 0x%04x, "
-                      "result = \"%s\", expected = \"%s\"\n",
-                      test->id, buf, expect);
+    if(expect && strcmp(buf, expect) != 0) {
+      curl_mfprintf(stderr, "Curl_cipher_suite_get_str FAILED for 0x%04x, "
+                    "result = \"%s\", expected = \"%s\"\n",
+                    test->id, buf, expect);
       unitfail++;
     }
   }
@@ -766,16 +766,16 @@ UNITTEST_START
       len = end - ptr;
 
       if(id != test->id) {
-        fprintf(stderr, "Curl_cipher_suite_walk_str FAILED for \"%s\" "
-                        "unexpected cipher, "
-                        "result = 0x%04x, expected = 0x%04x\n",
-                        test->str, id, test->id);
+        curl_mfprintf(stderr, "Curl_cipher_suite_walk_str FAILED for \"%s\" "
+                      "unexpected cipher, "
+                      "result = 0x%04x, expected = 0x%04x\n",
+                      test->str, id, test->id);
         unitfail++;
       }
       if(len > 64 || strncmp(ptr, test->str, len) != 0) {
-        fprintf(stderr, "Curl_cipher_suite_walk_str ABORT for \"%s\" "
-                        "unexpected pointers\n",
-                        test->str);
+        curl_mfprintf(stderr, "Curl_cipher_suite_walk_str ABORT for \"%s\" "
+                      "unexpected pointers\n",
+                      test->str);
         unitfail++;
         goto unit_test_abort;
       }

@@ -28,7 +28,7 @@
  *
  */
 
-#include "curl_setup.h"
+#include "../curl_setup.h"
 
 #ifdef USE_WOLFSSL
 
@@ -56,30 +56,30 @@
 
 #include <limits.h>
 
-#include "urldata.h"
-#include "sendf.h"
-#include "inet_pton.h"
+#include "../urldata.h"
+#include "../sendf.h"
+#include "../curlx/inet_pton.h"
 #include "vtls.h"
 #include "vtls_int.h"
 #include "vtls_scache.h"
 #include "keylog.h"
-#include "parsedate.h"
-#include "connect.h" /* for the connect timeout */
-#include "progress.h"
-#include "select.h"
-#include "strcase.h"
-#include "strdup.h"
+#include "../parsedate.h"
+#include "../connect.h" /* for the connect timeout */
+#include "../progress.h"
+#include "../select.h"
+#include "../strcase.h"
+#include "../strdup.h"
 #include "x509asn1.h"
-#include "curl_printf.h"
-#include "multiif.h"
+#include "../curl_printf.h"
+#include "../multiif.h"
 
 #include <wolfssl/ssl.h>
 #include <wolfssl/error-ssl.h>
 #include "wolfssl.h"
 
 /* The last #include files should be: */
-#include "curl_memory.h"
-#include "memdebug.h"
+#include "../curl_memory.h"
+#include "../memdebug.h"
 
 #ifdef HAVE_WOLFSSL_CTX_GENERATEECHCONFIG
 #define USE_ECH_WOLFSSL
@@ -96,11 +96,11 @@
 #endif
 #endif
 
-#ifdef HAVE_WOLFSSL_BIO
+#ifdef HAVE_WOLFSSL_BIO_NEW
 #define USE_BIO_CHAIN
-#ifdef HAVE_WOLFSSL_FULL_BIO
+#ifdef HAVE_WOLFSSL_BIO_SET_SHUTDOWN
 #define USE_FULL_BIO
-#else /* HAVE_WOLFSSL_FULL_BIO */
+#else /* HAVE_WOLFSSL_BIO_SET_SHUTDOWN */
 #undef USE_FULL_BIO
 #endif
 /* wolfSSL 5.7.4 and older do not have these symbols, but only the
@@ -114,7 +114,7 @@
 #define wolfSSL_BIO_set_retry_read    BIO_set_retry_read
 #endif /* !WOLFSSL_BIO_CTRL_GET_CLOSE */
 
-#else /* HAVE_WOLFSSL_BIO */
+#else /* HAVE_WOLFSSL_BIO_NEW */
 #undef USE_BIO_CHAIN
 #endif
 
@@ -525,7 +525,7 @@ static CURLcode wssl_on_session_reuse(struct Curl_cfilter *cf,
   else {
     infof(data, "SSL session allows %zu bytes of early data, "
           "reusing ALPN '%s'", connssl->earlydata_max, scs->alpn);
-    connssl->earlydata_state = ssl_earlydata_use;
+    connssl->earlydata_state = ssl_earlydata_await;
     connssl->state = ssl_connection_deferred;
     result = Curl_alpn_set_negotiated(cf, data, connssl,
                     (const unsigned char *)scs->alpn,
@@ -609,9 +609,11 @@ static CURLcode wssl_populate_x509_store(struct Curl_cfilter *cf,
 
   /* We do not want to do this again, no matter the outcome */
   wssl->x509_store_setup = TRUE;
-#if !defined(NO_FILESYSTEM) && defined(WOLFSSL_SYS_CA_CERTS)
+
+#ifndef NO_FILESYSTEM
   /* load native CA certificates */
   if(ssl_config->native_ca_store) {
+#ifdef WOLFSSL_SYS_CA_CERTS
     if(wolfSSL_CTX_load_system_CA_certs(wssl->ssl_ctx) != WOLFSSL_SUCCESS) {
       infof(data, "error importing native CA store, continuing anyway");
     }
@@ -619,6 +621,10 @@ static CURLcode wssl_populate_x509_store(struct Curl_cfilter *cf,
       imported_native_ca = TRUE;
       infof(data, "successfully imported native CA store");
     }
+#else
+    infof(data, "ignoring native CA option because wolfSSL was built without "
+          "native CA support");
+#endif
   }
 #endif /* !NO_FILESYSTEM */
 
@@ -708,8 +714,8 @@ wssl_cached_x509_store_expired(const struct Curl_easy *data,
                                const struct wssl_x509_share *mb)
 {
   const struct ssl_general_config *cfg = &data->set.general_ssl;
-  struct curltime now = Curl_now();
-  timediff_t elapsed_ms = Curl_timediff(now, mb->time);
+  struct curltime now = curlx_now();
+  timediff_t elapsed_ms = curlx_timediff(now, mb->time);
   timediff_t timeout_ms = cfg->ca_cache_timeout * (timediff_t)1000;
 
   if(timeout_ms < 0)
@@ -738,7 +744,7 @@ static WOLFSSL_X509_STORE *wssl_get_cached_x509_store(struct Curl_cfilter *cf,
 
   DEBUGASSERT(multi);
   share = multi ? Curl_hash_pick(&multi->proto_hash,
-                                 (void *)MPROTO_WSSL_X509_KEY,
+                                 CURL_UNCONST(MPROTO_WSSL_X509_KEY),
                                  sizeof(MPROTO_WSSL_X509_KEY)-1) : NULL;
   if(share && share->store &&
      !wssl_cached_x509_store_expired(data, share) &&
@@ -761,7 +767,7 @@ static void wssl_set_cached_x509_store(struct Curl_cfilter *cf,
   if(!multi)
     return;
   share = Curl_hash_pick(&multi->proto_hash,
-                         (void *)MPROTO_WSSL_X509_KEY,
+                         CURL_UNCONST(MPROTO_WSSL_X509_KEY),
                          sizeof(MPROTO_WSSL_X509_KEY)-1);
 
   if(!share) {
@@ -769,7 +775,7 @@ static void wssl_set_cached_x509_store(struct Curl_cfilter *cf,
     if(!share)
       return;
     if(!Curl_hash_add2(&multi->proto_hash,
-                       (void *)MPROTO_WSSL_X509_KEY,
+                       CURL_UNCONST(MPROTO_WSSL_X509_KEY),
                        sizeof(MPROTO_WSSL_X509_KEY)-1,
                        share, wssl_x509_share_free)) {
       free(share);
@@ -793,7 +799,7 @@ static void wssl_set_cached_x509_store(struct Curl_cfilter *cf,
       free(share->CAfile);
     }
 
-    share->time = Curl_now();
+    share->time = curlx_now();
     share->store = store;
     share->CAfile = CAfile;
   }
@@ -865,14 +871,14 @@ wssl_add_default_ciphers(bool tls13, struct dynbuf *buf)
       continue;
 
     /* if there already is data in the string, add colon separator */
-    if(Curl_dyn_len(buf)) {
-      CURLcode result = Curl_dyn_addn(buf, ":", 1);
+    if(curlx_dyn_len(buf)) {
+      CURLcode result = curlx_dyn_addn(buf, ":", 1);
       if(result)
         return result;
     }
 
     n = strlen(str);
-    if(Curl_dyn_addn(buf, str, n))
+    if(curlx_dyn_addn(buf, str, n))
       return CURLE_OUT_OF_MEMORY;
   }
 
@@ -953,7 +959,7 @@ CURLcode Curl_wssl_ctx_init(struct wssl_ctx *wctx,
   word16 pqkem = 0;
   size_t idx = 0;
 #endif
- CURLcode result = CURLE_FAILED_INIT;
+  CURLcode result = CURLE_FAILED_INIT;
 
   DEBUGASSERT(!wctx->ssl_ctx);
   DEBUGASSERT(!wctx->ssl);
@@ -1061,19 +1067,19 @@ CURLcode Curl_wssl_ctx_init(struct wssl_ctx *wctx,
     const char *ciphers12 = conn_config->cipher_list;
     const char *ciphers13 = conn_config->cipher_list13;
     struct dynbuf c;
-    Curl_dyn_init(&c, MAX_CIPHER_LEN);
+    curlx_dyn_init(&c, MAX_CIPHER_LEN);
 
     if(ciphers13)
-      result = Curl_dyn_add(&c, ciphers13);
+      result = curlx_dyn_add(&c, ciphers13);
     else
       result = wssl_add_default_ciphers(TRUE, &c);
 
     if(!result) {
       if(ciphers12) {
-        if(Curl_dyn_len(&c))
-          result = Curl_dyn_addn(&c, ":", 1);
+        if(curlx_dyn_len(&c))
+          result = curlx_dyn_addn(&c, ":", 1);
         if(!result)
-          result = Curl_dyn_add(&c, ciphers12);
+          result = curlx_dyn_add(&c, ciphers12);
       }
       else
         result = wssl_add_default_ciphers(FALSE, &c);
@@ -1081,20 +1087,20 @@ CURLcode Curl_wssl_ctx_init(struct wssl_ctx *wctx,
     if(result)
       goto out;
 
-    if(!wolfSSL_CTX_set_cipher_list(wctx->ssl_ctx, Curl_dyn_ptr(&c))) {
-      failf(data, "failed setting cipher list: %s", Curl_dyn_ptr(&c));
-      Curl_dyn_free(&c);
+    if(!wolfSSL_CTX_set_cipher_list(wctx->ssl_ctx, curlx_dyn_ptr(&c))) {
+      failf(data, "failed setting cipher list: %s", curlx_dyn_ptr(&c));
+      curlx_dyn_free(&c);
       result = CURLE_SSL_CIPHER;
       goto out;
     }
-    infof(data, "Cipher selection: %s", Curl_dyn_ptr(&c));
-    Curl_dyn_free(&c);
+    infof(data, "Cipher selection: %s", curlx_dyn_ptr(&c));
+    curlx_dyn_free(&c);
   }
 #endif
 
   curves = conn_config->curves;
   if(!curves && cf->conn->transport == TRNSPRT_QUIC)
-    curves = (char *)QUIC_GROUPS;
+    curves = (char *)CURL_UNCONST(QUIC_GROUPS);
 
   if(curves) {
 #ifdef WOLFSSL_HAVE_KYBER
@@ -1346,9 +1352,7 @@ CURLcode Curl_wssl_ctx_init(struct wssl_ctx *wctx,
       goto out;
     }
     if(data->set.tls_ech == CURLECH_GREASE) {
-      infof(data, "ECH: GREASE'd ECH not yet supported for wolfSSL");
-      result = CURLE_SSL_CONNECT_ERROR;
-      goto out;
+      infof(data, "ECH: GREASE is done by default by wolfSSL: no need to ask");
     }
     if(data->set.tls_ech & CURLECH_CLA_CFG
        && data->set.str[STRING_ECH_CONFIG]) {
@@ -1373,7 +1377,8 @@ CURLcode Curl_wssl_ctx_init(struct wssl_ctx *wctx,
       struct ssl_connect_data *connssl = cf->ctx;
       struct Curl_dns_entry *dns = NULL;
 
-      dns = Curl_fetch_addr(data, connssl->peer.hostname, connssl->peer.port);
+      dns = Curl_dnscache_get(data, connssl->peer.hostname, connssl->peer.port,
+                              cf->conn->ip_version);
       if(!dns) {
         infof(data, "ECH: requested but no DNS info available");
         if(data->set.tls_ech & CURLECH_HARD) {
@@ -1461,7 +1466,7 @@ wssl_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
   if(result)
     return result;
 
-#ifdef HAS_ALPN
+#ifdef HAVE_ALPN
   if(connssl->alpn && (connssl->state != ssl_connection_deferred)) {
     struct alpn_proto_buf proto;
     memset(&proto, 0, sizeof(proto));
@@ -1525,7 +1530,6 @@ static CURLcode wssl_verify_pinned(struct Curl_cfilter *cf,
                                    struct Curl_easy *data)
 {
   struct ssl_connect_data *connssl = cf->ctx;
-  struct wssl_ctx *wssl = (struct wssl_ctx *)connssl->backend;
 #ifndef CURL_DISABLE_PROXY
   const char * const pinnedpubkey = Curl_ssl_cf_is_proxy(cf) ?
     data->set.str[STRING_SSL_PINNEDPUBLICKEY_PROXY] :
@@ -1536,6 +1540,7 @@ static CURLcode wssl_verify_pinned(struct Curl_cfilter *cf,
 
   if(pinnedpubkey) {
 #ifdef KEEP_PEER_CERT
+    struct wssl_ctx *wssl = (struct wssl_ctx *)connssl->backend;
     WOLFSSL_X509 *x509;
     const char *x509_der;
     int x509_der_len;
@@ -1629,8 +1634,7 @@ static CURLcode wssl_send_earlydata(struct Curl_cfilter *cf,
   connssl->earlydata_state = ssl_earlydata_sent;
   if(!Curl_ssl_cf_is_proxy(cf))
     Curl_pgrsEarlyData(data, (curl_off_t)connssl->earlydata_skip);
-  infof(data, "SSL sending %" FMT_OFF_T " bytes of early data",
-        connssl->earlydata_skip);
+  infof(data, "SSL sending %zu bytes of early data", connssl->earlydata_skip);
 out:
   return result;
 }
@@ -1656,6 +1660,8 @@ static CURLcode wssl_handshake(struct Curl_cfilter *cf,
   }
   DEBUGASSERT((connssl->earlydata_state == ssl_earlydata_none) ||
               (connssl->earlydata_state == ssl_earlydata_sent));
+#else
+  DEBUGASSERT(connssl->earlydata_state == ssl_earlydata_none);
 #endif /* WOLFSSL_EARLY_DATA */
 
   wolfSSL_ERR_clear_error();
@@ -1763,8 +1769,8 @@ static CURLcode wssl_handshake(struct Curl_cfilter *cf,
         char *b64str = NULL;
         size_t blen = 0;
 
-        result = Curl_base64_encode((const char *)echConfigs, echConfigsLen,
-                                    &b64str, &blen);
+        result = curlx_base64_encode((const char *)echConfigs, echConfigsLen,
+                                     &b64str, &blen);
         if(!result && b64str)
           infof(data, "ECH: (not yet) retry_configs %s", b64str);
         free(b64str);
@@ -1782,52 +1788,6 @@ static CURLcode wssl_handshake(struct Curl_cfilter *cf,
   }
 }
 
-#ifdef WOLFSSL_EARLY_DATA
-static CURLcode wssl_set_earlydata(struct Curl_cfilter *cf,
-                                   struct Curl_easy *data,
-                                   const void *buf, size_t blen)
-{
-  struct ssl_connect_data *connssl = cf->ctx;
-  ssize_t nwritten = 0;
-  CURLcode result = CURLE_OK;
-
-  DEBUGASSERT(connssl->earlydata_state == ssl_earlydata_use);
-  DEBUGASSERT(Curl_bufq_is_empty(&connssl->earlydata));
-  if(blen) {
-    if(blen > connssl->earlydata_max)
-      blen = connssl->earlydata_max;
-    nwritten = Curl_bufq_write(&connssl->earlydata, buf, blen, &result);
-    CURL_TRC_CF(data, cf, "wssl_set_earlydata(len=%zu) -> %zd",
-                blen, nwritten);
-    if(nwritten < 0)
-      return result;
-  }
-  connssl->earlydata_state = ssl_earlydata_sending;
-  connssl->earlydata_skip = Curl_bufq_len(&connssl->earlydata);
-  return CURLE_OK;
-}
-
-static CURLcode wssl_connect_deferred(struct Curl_cfilter *cf,
-                                      struct Curl_easy *data,
-                                      const void *buf,
-                                      size_t blen,
-                                      bool *done)
-{
-  struct ssl_connect_data *connssl = cf->ctx;
-  CURLcode result = CURLE_OK;
-
-  DEBUGASSERT(connssl->state == ssl_connection_deferred);
-  *done = FALSE;
-  if(connssl->earlydata_state == ssl_earlydata_use) {
-    result = wssl_set_earlydata(cf, data, buf, blen);
-    if(result)
-      return result;
-  }
-
-  return wssl_connect(cf, data, done);
-}
-#endif /* WOLFSSL_EARLY_DATA */
-
 static ssize_t wssl_send(struct Curl_cfilter *cf,
                          struct Curl_easy *data,
                          const void *buf, size_t blen,
@@ -1840,38 +1800,6 @@ static ssize_t wssl_send(struct Curl_cfilter *cf,
   DEBUGASSERT(wssl);
 
   wolfSSL_ERR_clear_error();
-
-#ifdef WOLFSSL_EARLY_DATA
-  if(connssl->state == ssl_connection_deferred) {
-    bool done = FALSE;
-    *curlcode = wssl_connect_deferred(cf, data, buf, blen, &done);
-    if(*curlcode) {
-      nwritten = -1;
-      goto out;
-    }
-    else if(!done) {
-      *curlcode = CURLE_AGAIN;
-      nwritten = -1;
-      goto out;
-    }
-    DEBUGASSERT(connssl->state == ssl_connection_complete);
-  }
-
-  if(connssl->earlydata_skip) {
-    if(connssl->earlydata_skip >= blen) {
-      connssl->earlydata_skip -= blen;
-      *curlcode = CURLE_OK;
-      nwritten = (ssize_t)blen;
-      goto out;
-    }
-    else {
-      total_written += connssl->earlydata_skip;
-      buf = ((const char *)buf) + connssl->earlydata_skip;
-      blen -= connssl->earlydata_skip;
-      connssl->earlydata_skip = 0;
-    }
-  }
-#endif /* WOLFSSL_EARLY_DATA */
 
   if(blen) {
     int memlen = (blen > (size_t)INT_MAX) ? INT_MAX : (int)blen;
@@ -2065,21 +1993,6 @@ static ssize_t wssl_recv(struct Curl_cfilter *cf,
 
   DEBUGASSERT(wssl);
 
-#ifdef WOLFSSL_EARLY_DATA
-  if(connssl->state == ssl_connection_deferred) {
-    bool done = FALSE;
-    *curlcode = wssl_connect_deferred(cf, data, NULL, 0, &done);
-    if(*curlcode) {
-      return -1;
-    }
-    else if(!done) {
-      *curlcode = CURLE_AGAIN;
-      return-1;
-    }
-    DEBUGASSERT(connssl->state == ssl_connection_complete);
-  }
-#endif
-
   wolfSSL_ERR_clear_error();
   *curlcode = CURLE_OK;
 
@@ -2206,7 +2119,7 @@ static CURLcode wssl_connect(struct Curl_cfilter *cf,
   }
 
   if(ssl_connect_2 == connssl->connecting_state) {
-    if(connssl->earlydata_state == ssl_earlydata_use) {
+    if(connssl->earlydata_state == ssl_earlydata_await) {
       /* We defer the handshake until request data arrives. */
       DEBUGASSERT(connssl->state == ssl_connection_deferred);
       goto out;
@@ -2266,23 +2179,13 @@ static CURLcode wssl_connect(struct Curl_cfilter *cf,
     connssl->state = ssl_connection_complete;
 
 #ifdef WOLFSSL_EARLY_DATA
-    if(connssl->earlydata_state == ssl_earlydata_sent) {
-      /* report the true time the handshake was done */
-      connssl->handshake_done = Curl_now();
-      Curl_pgrsTimeWas(data, TIMER_APPCONNECT, connssl->handshake_done);
-      if(wolfSSL_get_early_data_status(wssl->ssl) ==
-         WOLFSSL_EARLY_DATA_REJECTED) {
-        connssl->earlydata_state = ssl_earlydata_rejected;
-        if(!Curl_ssl_cf_is_proxy(cf))
-          Curl_pgrsEarlyData(data, -(curl_off_t)connssl->earlydata_skip);
-        infof(data, "Server rejected TLS early data.");
-        connssl->earlydata_skip = 0;
-      }
-      else if(connssl->earlydata_skip) {
-        connssl->earlydata_state = ssl_earlydata_accepted;
-        infof(data, "Server accepted %zu bytes of TLS early data.",
-              connssl->earlydata_skip);
-      }
+    if(connssl->earlydata_state > ssl_earlydata_none) {
+      /* We should be in this state by now */
+      DEBUGASSERT(connssl->earlydata_state == ssl_earlydata_sent);
+      connssl->earlydata_state =
+        (wolfSSL_get_early_data_status(wssl->ssl) ==
+         WOLFSSL_EARLY_DATA_REJECTED) ?
+         ssl_earlydata_rejected : ssl_earlydata_accepted;
     }
 #endif /* WOLFSSL_EARLY_DATA */
   }

@@ -21,13 +21,13 @@
  * SPDX-License-Identifier: curl
  *
  ***************************************************************************/
-#include "curl_setup.h"
+#include "../curl_setup.h"
 
 #if defined(USE_SECTRANSP) || defined(USE_MBEDTLS) || \
     defined(USE_BEARSSL) || defined(USE_RUSTLS)
 #include "cipher_suite.h"
-#include "curl_printf.h"
-#include "strcase.h"
+#include "../curl_printf.h"
+#include "../strcase.h"
 #include <string.h>
 
 /*
@@ -786,12 +786,12 @@ static int cs_zip_to_str(const uint8_t zip[6],
 
   /* unzip the 8 indexes */
   indexes[0] = zip[0] >> 2;
-  indexes[1] = ((zip[0] << 4) & 0x3F) | zip[1] >> 4;
-  indexes[2] = ((zip[1] << 2) & 0x3F) | zip[2] >> 6;
+  indexes[1] = (uint8_t)(((zip[0] << 4) & 0x3F) | zip[1] >> 4);
+  indexes[2] = (uint8_t)(((zip[1] << 2) & 0x3F) | zip[2] >> 6);
   indexes[3] = ((zip[2] << 0) & 0x3F);
   indexes[4] = zip[3] >> 2;
-  indexes[5] = ((zip[3] << 4) & 0x3F) | zip[4] >> 4;
-  indexes[6] = ((zip[4] << 2) & 0x3F) | zip[5] >> 6;
+  indexes[5] = (uint8_t)(((zip[3] << 4) & 0x3F) | zip[4] >> 4);
+  indexes[6] = (uint8_t)(((zip[4] << 2) & 0x3F) | zip[5] >> 6);
   indexes[7] = ((zip[5] << 0) & 0x3F);
 
   if(indexes[0] == CS_TXT_IDX_TLS)

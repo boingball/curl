@@ -23,9 +23,9 @@
  * SPDX-License-Identifier: curl
  *
  ***************************************************************************/
-#include "curl_setup.h"
-#include "cfilters.h"
-#include "urldata.h"
+#include "../curl_setup.h"
+#include "../cfilters.h"
+#include "../urldata.h"
 #include "vtls.h"
 
 #ifdef USE_SSL
@@ -91,7 +91,7 @@ typedef enum {
 
 typedef enum {
   ssl_earlydata_none,
-  ssl_earlydata_use,
+  ssl_earlydata_await,
   ssl_earlydata_sending,
   ssl_earlydata_sent,
   ssl_earlydata_accepted,
@@ -126,6 +126,7 @@ struct ssl_connect_data {
   int io_need;                      /* TLS signals special SEND/RECV needs */
   BIT(use_alpn);                    /* if ALPN shall be used in handshake */
   BIT(peer_closed);                 /* peer has closed connection */
+  BIT(prefs_checked);               /* SSL preferences have been checked */
 };
 
 

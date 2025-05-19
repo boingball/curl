@@ -44,6 +44,17 @@ curl drops support for the winbuild build method after September 2025.
 We recommend migrating to CMake. See the migration guide in
 `docs/INSTALL-CMAKE.md`.
 
+## VS2008
+
+curl drops support for getting built with Microsoft Visual Studio 2008 in
+November 2025.
+
+The only reason we kept support for this version is for Windows CE - and we
+intend to remove support for that Operating System in this time frame as well.
+Bumping the minimum to VS2010. VS2008 is a pain to support.
+
+Previous discusson and details: https://github.com/curl/curl/discussions/15972
+
 ## Past removals
 
  - Pipelining

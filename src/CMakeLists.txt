@@ -22,7 +22,7 @@
 #
 ###########################################################################
 set(EXE_NAME curl)
-set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS "BUILDING_CURL")
+set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS "${CURL_DEBUG_MACROS}")
 
 set(_curl_cfiles_gen "")
 set(_curl_hfiles_gen "")
@@ -65,7 +65,7 @@ if(CURL_CA_EMBED_SET)
   endif()
 endif()
 
-# Get 'CURL_CFILES', 'CURLX_CFILES', 'CURL_HFILES', 'CURLTOOL_LIBCURL_CFILES' variables
+# Get 'CURL_CFILES', 'CURLX_CFILES', 'CURL_HFILES' variables
 curl_transform_makefile_inc("Makefile.inc" "${CMAKE_CURRENT_BINARY_DIR}/Makefile.inc.cmake")
 include("${CMAKE_CURRENT_BINARY_DIR}/Makefile.inc.cmake")
 
@@ -74,14 +74,16 @@ if(WIN32)
 endif()
 
 if(BUILD_STATIC_CURL)
-  set(CURLX_CFILES ${CURLTOOL_LIBCURL_CFILES})
+  set(CURLX_CFILES "")
 endif()
 
-if(ENABLE_CURLDEBUG)
-  # We must compile this source separately to avoid memdebug.h redefinitions
-  # applying to them.
-  set_source_files_properties("../lib/curl_multibyte.c" PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
-endif()
+set_property(DIRECTORY APPEND PROPERTY INCLUDE_DIRECTORIES
+  "${PROJECT_BINARY_DIR}/lib"  # for "curl_config.h"
+  "${PROJECT_SOURCE_DIR}/lib"  # for "curl_setup.h"
+  "${PROJECT_SOURCE_DIR}/lib/curlx"  # for curlx functions
+  # This is needed as tool_hugehelp.c is generated in the binary dir
+  "${PROJECT_SOURCE_DIR}/src"  # for "tool_hugehelp.h"
+)
 
 add_executable(
   ${EXE_NAME}
@@ -89,18 +91,21 @@ add_executable(
 )
 target_compile_definitions(${EXE_NAME} PRIVATE ${_curl_definitions})
 
+add_executable(${PROJECT_NAME}::${EXE_NAME} ALIAS ${EXE_NAME})
+
 add_executable(
-  ${PROJECT_NAME}::${EXE_NAME}
-  ALIAS ${EXE_NAME}
+  curlinfo
+  EXCLUDE_FROM_ALL
+  curlinfo.c
 )
 
 add_library(
   curltool  # special libcurltool library just for unittests
   STATIC
   EXCLUDE_FROM_ALL
-  ${CURL_CFILES} ${CURLTOOL_LIBCURL_CFILES} ${CURL_HFILES}
+  ${CURL_CFILES} ${CURL_HFILES}
 )
-target_compile_definitions(curltool PUBLIC "UNITTESTS" "CURL_STATICLIB")
+target_compile_definitions(curltool PUBLIC "CURL_STATICLIB" "UNITTESTS")
 target_link_libraries(curltool PRIVATE ${CURL_LIBS})
 
 if(CURL_HAS_LTO)
@@ -114,13 +119,6 @@ endif()
 source_group("curlX source files" FILES ${CURLX_CFILES})
 source_group("curl source files" FILES ${CURL_CFILES} ${_curl_cfiles_gen})
 source_group("curl header files" FILES ${CURL_HFILES} ${_curl_hfiles_gen})
-
-include_directories(
-  "${PROJECT_BINARY_DIR}/lib"  # for "curl_config.h"
-  "${PROJECT_SOURCE_DIR}/lib"  # for "curl_setup.h"
-  # This is needed as tool_hugehelp.c is generated in the binary dir
-  "${PROJECT_SOURCE_DIR}/src"  # for "tool_hugehelp.h"
-)
 
 # Build curl executable
 target_link_libraries(${EXE_NAME} ${LIB_SELECTED_FOR_EXE} ${CURL_LIBS})

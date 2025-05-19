@@ -50,8 +50,9 @@
 #include <stddef.h>
 
 #include "curl_addrinfo.h"
-#include "inet_pton.h"
-#include "warnless.h"
+#include "fake_addrinfo.h"
+#include "curlx/inet_pton.h"
+#include "curlx/warnless.h"
 /* The last 3 #include files should be in this order */
 #include "curl_printf.h"
 #include "curl_memory.h"
@@ -430,13 +431,13 @@ Curl_ip2addr(int af, const void *inaddr, const char *hostname, int port)
 struct Curl_addrinfo *Curl_str2addr(char *address, int port)
 {
   struct in_addr in;
-  if(Curl_inet_pton(AF_INET, address, &in) > 0)
+  if(curlx_inet_pton(AF_INET, address, &in) > 0)
     /* This is a dotted IP address 123.123.123.123-style */
     return Curl_ip2addr(AF_INET, &in, address, port);
 #ifdef USE_IPV6
   {
     struct in6_addr in6;
-    if(Curl_inet_pton(AF_INET6, address, &in6) > 0)
+    if(curlx_inet_pton(AF_INET6, address, &in6) > 0)
       /* This is a dotted IPv6 address ::1-style */
       return Curl_ip2addr(AF_INET6, &in6, address, port);
   }
@@ -508,6 +509,14 @@ curl_dbg_freeaddrinfo(struct addrinfo *freethis,
                source, line, (void *)freethis);
 #ifdef USE_LWIPSOCK
   lwip_freeaddrinfo(freethis);
+#elif defined(USE_FAKE_GETADDRINFO)
+  {
+    const char *env = getenv("CURL_DNS_SERVER");
+    if(env)
+      r_freeaddrinfo(freethis);
+    else
+      freeaddrinfo(freethis);
+  }
 #else
   freeaddrinfo(freethis);
 #endif
@@ -526,13 +535,20 @@ curl_dbg_freeaddrinfo(struct addrinfo *freethis,
 
 int
 curl_dbg_getaddrinfo(const char *hostname,
-                    const char *service,
-                    const struct addrinfo *hints,
-                    struct addrinfo **result,
-                    int line, const char *source)
+                     const char *service,
+                     const struct addrinfo *hints,
+                     struct addrinfo **result,
+                     int line, const char *source)
 {
 #ifdef USE_LWIPSOCK
   int res = lwip_getaddrinfo(hostname, service, hints, result);
+#elif defined(USE_FAKE_GETADDRINFO)
+  int res;
+  const char *env = getenv("CURL_DNS_SERVER");
+  if(env)
+    res = r_getaddrinfo(hostname, service, hints, result);
+  else
+    res = getaddrinfo(hostname, service, hints, result);
 #else
   int res = getaddrinfo(hostname, service, hints, result);
 #endif

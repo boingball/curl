@@ -97,6 +97,7 @@ my %warnings = (
     'EMPTYLINEBRACE'        => 'Empty line before the open brace',
     'EQUALSNOSPACE'         => 'equals sign without following space',
     'EQUALSNULL'            => 'if/while comparison with == NULL',
+    'ERRNOVAR'              => 'use of bare errno define',
     'EXCLAMATIONSPACE'      => 'Whitespace after exclamation mark in expression',
     'FOPENMODE'             => 'fopen needs a macro for the mode string',
     'INCLUDEDUP',           => 'same file is included again',
@@ -479,10 +480,10 @@ sub scanfile {
             my $count = 0;
             while($l =~ /([\d]{4})/g) {
                 push @copyright, {
-                  year => $1,
-                  line => $line,
-                  col => index($l, $1),
-                  code => $l
+                    year => $1,
+                    line => $line,
+                    col => index($l, $1),
+                    code => $l
                 };
                 $count++;
             }
@@ -873,7 +874,7 @@ sub scanfile {
             $suff =~ s/\(/\\(/;
             $l =~ s/$prefix$bad$suff/$prefix$replace/;
             goto again;
-      }
+        }
         $l = $bl; # restore to pre-bannedfunc content
 
         if($warnings{"STDERR"}) {
@@ -1022,6 +1023,12 @@ sub scanfile {
                       "space after exclamation mark");
         }
 
+        if($nostr =~ /(.*)\b(EACCES|EADDRINUSE|EADDRNOTAVAIL|EAFNOSUPPORT|EBADF|ECONNREFUSED|ECONNRESET|EINPROGRESS|EINTR|EINVAL|EISCONN|EMSGSIZE|ENOMEM|ETIMEDOUT|EWOULDBLOCK)\b/) {
+            checkwarn("ERRNOVAR",
+                      $line, length($1), $file, $ol,
+                      "use of bare errno define $2, use SOCK$2");
+        }
+
         # check for more than one consecutive space before open brace or
         # question mark. Skip lines containing strings since they make it hard
         # due to artificially getting multiple spaces
@@ -1033,16 +1040,16 @@ sub scanfile {
         }
       preproc:
         if($prep) {
-          # scan for use of banned symbols on a preprocessor line
-          if($l =~ /^(^|.*\W)
-                     (WIN32)
-                     (\W|$)
-                   /x) {
-              checkwarn("BANNEDPREPROC",
-                        $line, length($1), $file, $ol,
-                        "use of $2 is banned from preprocessor lines" .
-                        (($2 eq "WIN32") ? ", use _WIN32 instead" : ""));
-          }
+            # scan for use of banned symbols on a preprocessor line
+            if($l =~ /^(^|.*\W)
+                       (WIN32)
+                       (\W|$)
+                     /x) {
+                checkwarn("BANNEDPREPROC",
+                          $line, length($1), $file, $ol,
+                          "use of $2 is banned from preprocessor lines" .
+                          (($2 eq "WIN32") ? ", use _WIN32 instead" : ""));
+            }
         }
         $line++;
         $prevp = $prep;
