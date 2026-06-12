@@ -360,6 +360,9 @@ Notes:
 
 ## AmigaOS
 
+See `docs/AMIGAOS.md` for AmigaOS binary archive notes, runtime
+requirements and CPU-specific libcurl library naming.
+
 You can use either autotools or CMake:
 
 ```sh
