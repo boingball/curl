@@ -1,0 +1,53 @@
+# Convenience wrapper for scripts/build-amiga-release.sh
+#
+# Examples:
+#   make -f Makefile.amiga release
+#   make -f Makefile.amiga release CPUS="020 030 040 060"
+#   make -f Makefile.amiga build CPUS=030 PACKAGE=0
+#   make -f Makefile.amiga clean
+#
+SHELL := /bin/bash
+
+CPUS ?= 000 020 030 040 060
+JOBS ?= 1
+AMIGA_PREFIX ?= /opt/amiga
+PACKAGE ?= 1
+STRIP ?= 0
+REGEN ?= 1
+CLEAN_BUILD ?= 1
+
+BUILD_SCRIPT := bash ./scripts/build-amiga-release.sh
+
+SCRIPT_FLAGS := --jobs $(JOBS) --toolchain $(AMIGA_PREFIX)
+
+ifeq ($(PACKAGE),0)
+SCRIPT_FLAGS += --no-package
+endif
+
+ifeq ($(STRIP),1)
+SCRIPT_FLAGS += --strip
+endif
+
+ifeq ($(REGEN),0)
+SCRIPT_FLAGS += --no-regen
+endif
+
+ifeq ($(CLEAN_BUILD),0)
+SCRIPT_FLAGS += --no-clean
+endif
+
+.PHONY: all release build clean help 000 020 030 040 060
+
+all: release
+
+release build:
+	$(BUILD_SCRIPT) $(SCRIPT_FLAGS) $(CPUS)
+
+clean:
+	$(BUILD_SCRIPT) --clean-only
+
+help:
+	$(BUILD_SCRIPT) --help
+
+000 020 030 040 060:
+	$(BUILD_SCRIPT) $(SCRIPT_FLAGS) $@
