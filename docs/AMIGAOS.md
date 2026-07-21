@@ -45,11 +45,11 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 - Retested all supported CPU targets: 68000, 68020, 68040, and 68060. All
   binaries now pass TLS tests reliably.
 - Updated build system:
-  - GCC 15.2 m68k-amigaos toolchain
+  - GCC 13.2 m68k-amigaos toolchain
   - clib2 runtime
   - soft-float ABI
   - dynamic AmiSSL linking
-  - `-O0` due to current GCC 15 m68k optimization issues
+  - `-O0` for stable release builds
 - Updated protocol support, matching upstream curl 8.18.0 except for protocols
   requiring unsupported libraries, such as HTTP/2, HTTP/3, SSH, LDAP, IDN,
   PSL, Brotli, and Zstd.
@@ -72,30 +72,50 @@ building Amiga applications.
 
 ## Developer information
 
-Used compiler:
+Tested release compiler:
 
 ```text
-m68k-amigaos-gcc (GCC) 15.2.0
+m68k-amigaos-gcc (GCC) 13.2.0
 ```
 
-Example autotools configuration:
+GCC 13.2 is currently the known-good release compiler for this port. GCC 15.2
+builds have shown runtime crashes on AmigaOS and are not recommended for
+release binaries at this time.
+
+Example out-of-tree autotools build for the 68000 target:
 
 ```sh
-./buildconf &&
-PKG_CONFIG=true ./configure \
+autoreconf -fi
+
+rm -rf build-amiga-000
+mkdir build-amiga-000
+cd build-amiga-000
+
+PKG_CONFIG=true ../configure \
   --host=m68k-amigaos \
-  CC=m68k-amigaos-gcc \
+  CC=/opt/amiga/bin/m68k-amigaos-gcc \
+  AR=/opt/amiga/bin/m68k-amigaos-ar \
+  RANLIB=/opt/amiga/bin/m68k-amigaos-ranlib \
   --disable-shared \
   --disable-ipv6 \
-  --prefix=/opt/amiga15 \
+  --prefix=/opt/amiga \
   --disable-netrc \
   --without-libpsl \
   --with-amissl \
   --with-zlib \
   --disable-threaded-resolver \
   CFLAGS="-m68000 -O0 -msoft-float -mcrt=clib2" \
-  LIBS="-lnet -lm -lc -lz -lunix -latomic"
+  LIBS="-lnet -lc -lz -lunix -latomic -lgcc -lm"
+
+make -j1 V=1
 ```
+
+The static library order is significant. In particular, `-lgcc` must appear
+before the final `-lm` so that GCC soft-float helpers such as `__adddf3` are
+resolved without pulling in a second clib2 constructor definition.
+
+For the other CPU targets, use the same procedure and replace `-m68000` with
+`-m68020`, `-m68040`, or `-m68060` in `CFLAGS`.
 
 Source code for this AmigaOS port is available at:
 
@@ -106,7 +126,7 @@ Source code for this AmigaOS port is available at:
 ### curl 8.18.0 - 2025-11-18
 
 - Increased stack cookie to 32768 for TLS stability
-- Updated to GCC 15.2 toolchain
+- Built with the GCC 13.2 release toolchain
 - Added CPU-specific libcurl libraries
 - Reviewed minor AmigaOS fixes upstream
 
