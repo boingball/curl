@@ -20,8 +20,8 @@ Features:  alt-svc HSTS HTTPS-proxy libz NTLM SSL TLS-SRP threadsafe
 ```
 
 curl is a command line tool for transferring data specified with URL syntax.
-The archive also includes libcurl, which allows Amiga developers to link curl
-functionality directly into their own applications.
+The archive also includes CPU-specific static libcurl libraries for Amiga
+developers.
 
 The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 
@@ -47,6 +47,7 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 - Uses the clib2 runtime, soft-float ABI, dynamic AmiSSL linking and `-O0` for
   stable release builds.
 - Added repeatable multi-CPU release and Aminet packaging tools.
+- Removed public headers and compiler logs from the binary release archive.
 
 ## Files included
 
@@ -62,9 +63,14 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 | `libcurl.a.030` | static library (68030) |
 | `libcurl.a.040` | static library (68040) |
 | `libcurl.a.060` | static library (68060) |
+| `docs/AMIGAOS.md` | AmigaOS release and build documentation |
+| `BUILD-INFO.txt` | compiler, flags and Git revision |
+| `COPYING` | distribution terms |
+| `SHA256SUMS` | file checksums |
 
 Developers should use the matching libcurl library for their target CPU when
-building Amiga applications.
+building Amiga applications. Public headers are available from the source
+repository.
 
 ## Developer information
 
@@ -94,8 +100,9 @@ make -f Makefile.amiga release CPUS="020 030 040 060"
 
 The builder uses separate out-of-tree directories, records the compiler and
 Git revision, copies the matching executables and static libraries, includes
-public headers and documentation, generates SHA-256 checksums, and creates a
-release archive under `dist-amiga/`.
+only release documentation, generates SHA-256 checksums, and creates a release
+archive under `dist-amiga/`. Compiler logs are retained separately under
+`build-amiga/logs/` and are not placed in the archive.
 
 Individual targets can also be built directly:
 
@@ -115,6 +122,10 @@ make -f Makefile.amiga aminet
 The readme template is stored at `packages/AmigaOS/curl.readme.in`. The Aminet
 readme is generated with the current curl version and date, placed inside the
 release drawer, and copied beside the archive under `dist-amiga/`.
+
+The packaging helper also removes any `include/` and `build-logs/` drawers
+left in a release made with an older version of the builder, so the existing
+CPU builds can be repackaged without recompiling.
 
 To create the LHA automatically when the `lha` command is installed:
 
@@ -177,6 +188,7 @@ Source code for this AmigaOS port is available at:
 - Built with the known-good GCC 13.2 release toolchain
 - Added dedicated 68030 executable and static library builds
 - Added repeatable multi-CPU and Aminet packaging tools
+- Removed public headers and compiler logs from the binary package
 
 ### curl 8.18.0-DEV - 2025-11-18
 
