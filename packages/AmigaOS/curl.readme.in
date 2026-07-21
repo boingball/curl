@@ -1,0 +1,109 @@
+Short:        File and data transfer tool and lib
+Author:       Daniel Stenberg; AmigaOS port by Darren Banfi
+Uploader:     boingball@gmail.com (Darren Banfi)
+Type:         comm/tcp
+Version:      @AMINET_VERSION@
+Architecture: m68k-amigaos >= 3.0
+Requires:     util/libs/AmiSSL-v5-OS3.lha
+Replaces:     @AMINET_REPLACES@
+Distribution: Aminet
+
+curl @VERSION@
+----------------
+
+curl is a command-line tool for transferring data using URL syntax. This
+archive also includes static libcurl libraries and the public development
+headers, allowing Amiga developers to use curl functionality directly in
+their own applications.
+
+This AmigaOS build supports the following protocols:
+
+  dict file ftp ftps gopher gophers http https imap imaps
+  ipfs ipns mqtt pop3 pop3s rtsp smb smbs smtp smtps telnet
+  tftp ws wss
+
+Main features include alt-svc, HSTS, HTTPS proxy support, compression through
+zlib, NTLM, SSL/TLS, TLS-SRP and thread-safe operation.
+
+System requirements
+-------------------
+
+  - AmigaOS 3.0 or newer
+  - AmiSSL v5.0 or newer
+  - 68000, 68020, 68030, 68040 or 68060 CPU; no FPU required
+  - Minimum stack size of 32768 bytes
+  - A working TCP/IP stack for network transfers
+
+AmigaOS 3.1.4 and newer should select the required stack automatically. On
+older systems, use the following before starting curl:
+
+  STACK 32768
+
+Roadshow TCP and WinUAE networking have been tested. Both real hardware and
+emulated systems are supported.
+
+Files included
+--------------
+
+  curl             68000 command-line executable
+  curl.020         68020 command-line executable
+  curl.030         68030 command-line executable
+  curl.040         68040 command-line executable
+  curl.060         68060 command-line executable
+
+  libcurl.a         static library for 68000
+  libcurl.a.020     static library for 68020
+  libcurl.a.030     static library for 68030
+  libcurl.a.040     static library for 68040
+  libcurl.a.060     static library for 68060
+
+  include/curl/     public libcurl development headers
+  docs/AMIGAOS.md  AmigaOS release and build documentation
+
+Developers should use the libcurl library matching their target CPU.
+
+Developer information
+---------------------
+
+Known-good release compiler:
+
+  m68k-amigaos-gcc (GCC) 13.2.0
+
+The binaries use the clib2 runtime, soft-float ABI, dynamic AmiSSL linking and
+-O0 optimisation for stable release builds. GCC 15.2 builds were found to
+crash at runtime on AmigaOS and are not used for this release.
+
+The exact build flags, Git commit and per-CPU compiler logs are included in
+BUILD-INFO.txt and the build-logs drawer.
+
+Source code:
+
+  https://github.com/boingball/curl
+
+Release notes
+-------------
+
+@VERSION@ - @BUILD_DATE@
+
+  - Updated to the current upstream curl development snapshot
+  - Built with the known-good GCC 13.2 AmigaOS toolchain
+  - Added dedicated 68030 executable and static library builds
+  - Includes 68000, 68020, 68030, 68040 and 68060 targets
+  - Uses a 32768-byte stack cookie for TLS and compressed transfers
+  - Includes reproducible multi-CPU build and Aminet packaging scripts
+
+8.18.0-DEV - 2025-11-18
+
+  - Increased the stack cookie to 32768 bytes
+  - Added CPU-specific libcurl libraries
+  - Updated protocol support
+
+8.11.2-DEV - 2024-11-26
+
+  - Fixed stack size handling with a 16384-byte stack cookie
+
+8.11.1-DEV - 2024-11-24
+
+  - Initial modern curl 8.11 release for AmigaOS 3.x
+
+Study the COPYING file for distribution terms.
