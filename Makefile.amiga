@@ -4,6 +4,8 @@
 #   make -f Makefile.amiga release
 #   make -f Makefile.amiga release CPUS="020 030 040 060"
 #   make -f Makefile.amiga build CPUS=030 PACKAGE=0
+#   make -f Makefile.amiga aminet
+#   make -f Makefile.amiga aminet-lha
 #   make -f Makefile.amiga clean
 #
 SHELL := /bin/bash
@@ -17,6 +19,7 @@ REGEN ?= 1
 CLEAN_BUILD ?= 1
 
 BUILD_SCRIPT := bash ./scripts/build-amiga-release.sh
+AMINET_SCRIPT := bash ./scripts/prepare-amiga-aminet.sh
 
 SCRIPT_FLAGS := --jobs $(JOBS) --toolchain $(AMIGA_PREFIX)
 
@@ -36,12 +39,18 @@ ifeq ($(CLEAN_BUILD),0)
 SCRIPT_FLAGS += --no-clean
 endif
 
-.PHONY: all release build clean help 000 020 030 040 060
+.PHONY: all release build aminet aminet-lha clean help 000 020 030 040 060
 
 all: release
 
 release build:
 	$(BUILD_SCRIPT) $(SCRIPT_FLAGS) $(CPUS)
+
+aminet: release
+	$(AMINET_SCRIPT)
+
+aminet-lha: release
+	$(AMINET_SCRIPT) --lha
 
 clean:
 	$(BUILD_SCRIPT) --clean-only
