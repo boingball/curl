@@ -6,6 +6,7 @@
 #   make -f Makefile.amiga build CPUS=030 PACKAGE=0
 #   make -f Makefile.amiga aminet
 #   make -f Makefile.amiga aminet-lha
+#   make -f Makefile.amiga release-aminet-lha
 #   make -f Makefile.amiga clean
 #
 SHELL := /bin/bash
@@ -39,17 +40,26 @@ ifeq ($(CLEAN_BUILD),0)
 SCRIPT_FLAGS += --no-clean
 endif
 
-.PHONY: all release build aminet aminet-lha clean help 000 020 030 040 060
+.PHONY: all release build aminet aminet-lha release-aminet release-aminet-lha clean help 000 020 030 040 060
 
 all: release
 
 release build:
 	$(BUILD_SCRIPT) $(SCRIPT_FLAGS) $(CPUS)
 
-aminet: release
+# Package an already-built release. These targets intentionally do not depend
+# on `release`, so they do not rebuild every CPU target.
+aminet:
 	$(AMINET_SCRIPT)
 
-aminet-lha: release
+aminet-lha:
+	$(AMINET_SCRIPT) --lha
+
+# Explicit build-and-package convenience targets.
+release-aminet: release
+	$(AMINET_SCRIPT)
+
+release-aminet-lha: release
 	$(AMINET_SCRIPT) --lha
 
 clean:
