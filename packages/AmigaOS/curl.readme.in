@@ -12,9 +12,8 @@ curl @VERSION@
 ----------------
 
 curl is a command-line tool for transferring data using URL syntax. This
-archive also includes static libcurl libraries and the public development
-headers, allowing Amiga developers to use curl functionality directly in
-their own applications.
+archive also includes CPU-specific static libcurl libraries for Amiga
+developers.
 
 This AmigaOS build supports the following protocols:
 
@@ -57,10 +56,13 @@ Files included
   libcurl.a.040     static library for 68040
   libcurl.a.060     static library for 68060
 
-  include/curl/     public libcurl development headers
   docs/AMIGAOS.md  AmigaOS release and build documentation
+  BUILD-INFO.txt   compiler, flags and source revision
+  COPYING          distribution terms
+  SHA256SUMS       file checksums
 
-Developers should use the libcurl library matching their target CPU.
+Developers should use the libcurl library matching their target CPU. Public
+headers are available from the source repository.
 
 Developer information
 ---------------------
@@ -73,8 +75,7 @@ The binaries use the clib2 runtime, soft-float ABI, dynamic AmiSSL linking and
 -O0 optimisation for stable release builds. GCC 15.2 builds were found to
 crash at runtime on AmigaOS and are not used for this release.
 
-The exact build flags, Git commit and per-CPU compiler logs are included in
-BUILD-INFO.txt and the build-logs drawer.
+The exact build flags and Git commit are recorded in BUILD-INFO.txt.
 
 Source code:
 
