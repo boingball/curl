@@ -29,7 +29,7 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 
 - AmiSSL v5.0 or newer (mandatory)
 - AmigaOS 3.x (3.2.2.1 tested, works on 3.0-3.1)
-- 68000, 68020, 68040, or 68060 CPU (no FPU required)
+- 68000, 68020, 68030, 68040, or 68060 CPU (no FPU required)
 - Minimum stack: 32768 bytes
   - AmigaOS 3.1.4 and newer auto-select the correct stack
   - Older versions: set it manually with `STACK 32768`
@@ -42,8 +42,8 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 - Increased the default stack size from 16384 to 32768. This fixes crashes
   during TLS handshakes, certificate validation, compressed downloads, and
   large HTTPS transfers.
-- Retested all supported CPU targets: 68000, 68020, 68040, and 68060. All
-  binaries now pass TLS tests reliably.
+- Retested all supported CPU targets: 68000, 68020, 68030, 68040, and 68060.
+  All binaries now pass TLS tests reliably.
 - Updated build system:
   - GCC 13.2 m68k-amigaos toolchain
   - clib2 runtime
@@ -60,10 +60,12 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 | ---- | ----------- |
 | `curl` | 68000 binary |
 | `curl.020` | 68020 binary |
+| `curl.030` | 68030 binary |
 | `curl.040` | 68040 binary |
 | `curl.060` | 68060 binary |
 | `libcurl.a` | static library (68000) |
-| `libcurl.a.020` | static library (68020+) |
+| `libcurl.a.020` | static library (68020) |
+| `libcurl.a.030` | static library (68030) |
 | `libcurl.a.040` | static library (68040) |
 | `libcurl.a.060` | static library (68060) |
 
@@ -82,7 +84,32 @@ GCC 13.2 is currently the known-good release compiler for this port. GCC 15.2
 builds have shown runtime crashes on AmigaOS and are not recommended for
 release binaries at this time.
 
-Example out-of-tree autotools build for the 68000 target:
+### Automated release build
+
+The repository includes a reusable release builder for all CPU targets:
+
+```sh
+make -f Makefile.amiga release
+```
+
+To build only selected targets:
+
+```sh
+make -f Makefile.amiga release CPUS="020 030 040 060"
+```
+
+The builder uses separate out-of-tree directories, records the compiler and
+Git revision, copies the matching executables and static libraries, includes
+public headers and documentation, generates SHA-256 checksums, and creates a
+release archive under `dist-amiga/`.
+
+Individual targets can also be built directly:
+
+```sh
+make -f Makefile.amiga 030
+```
+
+### Manual 68000 build
 
 ```sh
 autoreconf -fi
@@ -115,7 +142,7 @@ before the final `-lm` so that GCC soft-float helpers such as `__adddf3` are
 resolved without pulling in a second clib2 constructor definition.
 
 For the other CPU targets, use the same procedure and replace `-m68000` with
-`-m68020`, `-m68040`, or `-m68060` in `CFLAGS`.
+`-m68020`, `-m68030`, `-m68040`, or `-m68060` in `CFLAGS`.
 
 Source code for this AmigaOS port is available at:
 
@@ -128,6 +155,7 @@ Source code for this AmigaOS port is available at:
 - Increased stack cookie to 32768 for TLS stability
 - Built with the GCC 13.2 release toolchain
 - Added CPU-specific libcurl libraries
+- Added a repeatable multi-CPU release builder
 - Reviewed minor AmigaOS fixes upstream
 
 ### curl 8.11.2 - 2024-11-26
