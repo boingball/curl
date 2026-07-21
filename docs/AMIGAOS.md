@@ -6,13 +6,13 @@ SPDX-License-Identifier: curl
 
 # curl for AmigaOS
 
-This document describes the AmigaOS 3.x binary archive for curl 8.18.0-DEV
-and libcurl 8.18.0-DEV.
+This document describes the AmigaOS 3.x binary archive for curl 8.22.0-DEV
+and libcurl 8.22.0-DEV.
 
 ```text
-curl 8.18.0-DEV
+curl 8.22.0-DEV
 -------------------------------------
-libcurl/8.18.0-DEV AmiSSL/5.x OpenSSL/3.6.0 zlib/1.3.1
+libcurl/8.22.0-DEV AmiSSL/5.x OpenSSL/3.x zlib/1.3.1
 Protocols: dict file ftp ftps gopher gophers http https imap imaps
            ipfs ipns mqtt pop3 pop3s rtsp smb smbs smtp smtps telnet
            tftp ws wss
@@ -37,22 +37,16 @@ The AmigaOS archive is tested on multiple CPU targets and SSL workloads.
 - WinUAE TCP tested
 - Real hardware and emulation tested
 
-## What's new in 8.18.0 (AmigaOS release)
+## What's new in 8.22.0-DEV
 
-- Increased the default stack size from 16384 to 32768. This fixes crashes
-  during TLS handshakes, certificate validation, compressed downloads, and
-  large HTTPS transfers.
+- Updated to the current upstream curl development snapshot.
 - Retested all supported CPU targets: 68000, 68020, 68030, 68040, and 68060.
-  All binaries now pass TLS tests reliably.
-- Updated build system:
-  - GCC 13.2 m68k-amigaos toolchain
-  - clib2 runtime
-  - soft-float ABI
-  - dynamic AmiSSL linking
-  - `-O0` for stable release builds
-- Updated protocol support, matching upstream curl 8.18.0 except for protocols
-  requiring unsupported libraries, such as HTTP/2, HTTP/3, SSH, LDAP, IDN,
-  PSL, Brotli, and Zstd.
+- Added a dedicated 68030 executable and static libcurl library.
+- Uses the known-good GCC 13.2 m68k-amigaos toolchain after GCC 15.2 builds
+  were found to crash at runtime on AmigaOS.
+- Uses the clib2 runtime, soft-float ABI, dynamic AmiSSL linking and `-O0` for
+  stable release builds.
+- Added repeatable multi-CPU release and Aminet packaging tools.
 
 ## Files included
 
@@ -109,6 +103,33 @@ Individual targets can also be built directly:
 make -f Makefile.amiga 030
 ```
 
+### Aminet package
+
+A complete Aminet-ready build, including the generated `.readme`, is prepared
+with:
+
+```sh
+make -f Makefile.amiga aminet
+```
+
+The readme template is stored at `packages/AmigaOS/curl.readme.in`. The Aminet
+readme is generated with the current curl version and date, placed inside the
+release drawer, and copied beside the archive under `dist-amiga/`.
+
+To create the LHA automatically when the `lha` command is installed:
+
+```sh
+make -f Makefile.amiga aminet-lha
+```
+
+The Aminet version and replacement package can be overridden when required:
+
+```sh
+AMINET_VERSION=8.22-DEV-210726 \
+AMINET_REPLACES=comm/tcp/curl-8.18-DEV-18112025.lha \
+make -f Makefile.amiga aminet
+```
+
 ### Manual 68000 build
 
 ```sh
@@ -150,20 +171,25 @@ Source code for this AmigaOS port is available at:
 
 ## Release notes
 
-### curl 8.18.0 - 2025-11-18
+### curl 8.22.0-DEV - 2026-07-21
+
+- Updated to the current upstream development snapshot
+- Built with the known-good GCC 13.2 release toolchain
+- Added dedicated 68030 executable and static library builds
+- Added repeatable multi-CPU and Aminet packaging tools
+
+### curl 8.18.0-DEV - 2025-11-18
 
 - Increased stack cookie to 32768 for TLS stability
-- Built with the GCC 13.2 release toolchain
 - Added CPU-specific libcurl libraries
-- Added a repeatable multi-CPU release builder
 - Reviewed minor AmigaOS fixes upstream
 
-### curl 8.11.2 - 2024-11-26
+### curl 8.11.2-DEV - 2024-11-26
 
 - Added stack cookie 16384
 - Improved TLS robustness
 
-### curl 8.11.1 - 2024-11-24
+### curl 8.11.1-DEV - 2024-11-24
 
 - Initial modern port of curl 8.11 for AmigaOS 3.x
 
