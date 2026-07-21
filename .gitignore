@@ -28,6 +28,8 @@
 /.vs
 /bld/
 /build/
+/build-amiga/
+/dist-amiga/
 /stats/
 __pycache__
 Debug
