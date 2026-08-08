@@ -32,6 +32,10 @@ jobs:
               echo "Compiler: $AMIGA_GCC"
               echo "Toolchain prefix: $AMIGA_PREFIX"
               "$AMIGA_GCC" --version | head -1
+              echo "===== zlib files in SDK ====="
+              find "$AMIGA_PREFIX" -type f \( -name "libz.a" -o -name "zlib.h" \) -print 2>/dev/null || true
+              echo "===== compiler search dirs ====="
+              "$AMIGA_GCC" -print-search-dirs || true
               if ! make -f Makefile.amiga 030 AMIGA_PREFIX="$AMIGA_PREFIX" PACKAGE=0; then
                 echo "===== build-amiga/030/config.log ====="
                 cat build-amiga/030/config.log 2>/dev/null || true
