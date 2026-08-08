@@ -14,6 +14,11 @@ else
 fi
 
 AMIGA_PREFIX="${AMIGA_PREFIX:-/opt/amiga}"
+# Optional extra SDK search flags. Normal release builds leave these empty;
+# CI/toolchains that keep third-party Amiga SDKs outside GCC's default search
+# path can provide explicit -I/-L flags without changing the release recipe.
+AMIGA_CPPFLAGS="${AMIGA_CPPFLAGS:-}"
+AMIGA_LDFLAGS="${AMIGA_LDFLAGS:-}"
 BUILD_ROOT="${BUILD_ROOT:-$ROOT_DIR/build-amiga}"
 DIST_ROOT="${DIST_ROOT:-$ROOT_DIR/dist-amiga}"
 JOBS="${JOBS:-1}"
@@ -139,6 +144,8 @@ Toolchain prefix:   $AMIGA_PREFIX
 Compiler:           $COMPILER_VERSION
 CPU targets:        ${CPUS[*]}
 Common CFLAGS:      -O0 -msoft-float -mcrt=clib2
+Extra CPPFLAGS:     $AMIGA_CPPFLAGS
+Extra LDFLAGS:      $AMIGA_LDFLAGS
 Static libraries:   $AMIGA_LIBS
 EOF_INFO
 
@@ -158,6 +165,7 @@ for cpu in "${CPUS[@]}"; do
       --disable-shared --disable-ipv6 --disable-dependency-tracking \
       --prefix="$AMIGA_PREFIX" --disable-netrc --without-libpsl \
       --with-amissl --with-zlib --disable-threaded-resolver \
+      CPPFLAGS="$AMIGA_CPPFLAGS" LDFLAGS="$AMIGA_LDFLAGS" \
       CFLAGS="$cflag -O0 -msoft-float -mcrt=clib2" LIBS="$AMIGA_LIBS"
     make -j"$JOBS" V="$VERBOSE_MAKE"
   ) 2>&1 | tee "$build_log"
