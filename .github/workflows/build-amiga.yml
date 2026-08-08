@@ -4,7 +4,6 @@ name: Build AmigaOS
 # This is a CI compile sanity check. Release binaries should still be made
 # with the known-good GCC 13.2 toolchain documented in README-AmigaOS.md and
 # docs/AMIGAOS.md and then tested on AmigaOS.
-# CI debug trigger.
 
 on:
   push:
@@ -33,7 +32,11 @@ jobs:
               echo "Compiler: $AMIGA_GCC"
               echo "Toolchain prefix: $AMIGA_PREFIX"
               "$AMIGA_GCC" --version | head -1
-              make -f Makefile.amiga 030 AMIGA_PREFIX="$AMIGA_PREFIX" PACKAGE=0
+              if ! make -f Makefile.amiga 030 AMIGA_PREFIX="$AMIGA_PREFIX" PACKAGE=0; then
+                echo "===== build-amiga/030/config.log ====="
+                cat build-amiga/030/config.log 2>/dev/null || true
+                exit 1
+              fi
             '
 
       - name: Confirm the Amiga outputs were produced
