@@ -25,7 +25,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD":/work -w /work \
             sacredbanana/amiga-compiler:m68k-amigaos \
-            bash -lc '
+            bash -c '
               set -e
               AMIGA_GCC="$(command -v m68k-amigaos-gcc)"
               AMIGA_PREFIX="$(dirname "$(dirname "$AMIGA_GCC")")"
