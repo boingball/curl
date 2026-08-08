@@ -1,0 +1,50 @@
+name: Build AmigaOS
+
+# Compile the AmigaOS curl port on changes to the amigaos branch.
+# This is a CI compile sanity check. Release binaries should still be made
+# with the known-good GCC 13.2 toolchain documented in README-AmigaOS.md and
+# docs/AMIGAOS.md and then tested on AmigaOS.
+
+on:
+  push:
+    branches: ["amigaos"]
+  pull_request:
+    branches: ["amigaos"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Compile 68030 curl with the Amiga SDK
+        run: |
+          docker run --rm -v "$PWD":/work -w /work \
+            sacredbanana/amiga-compiler:m68k-amigaos \
+            bash -lc '
+              set -e
+              AMIGA_GCC="$(command -v m68k-amigaos-gcc)"
+              AMIGA_PREFIX="$(dirname "$(dirname "$AMIGA_GCC")")"
+              echo "Compiler: $AMIGA_GCC"
+              echo "Toolchain prefix: $AMIGA_PREFIX"
+              "$AMIGA_GCC" --version | head -1
+              make -f Makefile.amiga 030 AMIGA_PREFIX="$AMIGA_PREFIX" PACKAGE=0
+            '
+
+      - name: Confirm the Amiga outputs were produced
+        run: |
+          find dist-amiga -maxdepth 2 -type f -print | sort
+          test -n "$(find dist-amiga -type f -name 'curl.030' -print -quit)"
+          test -n "$(find dist-amiga -type f -name 'libcurl.a.030' -print -quit)"
+          file $(find dist-amiga -type f -name 'curl.030' -print -quit) || true
+
+      - name: Upload compiled 68030 release drawer
+        uses: actions/upload-artifact@v4
+        with:
+          name: curl-68030-AmigaOS
+          path: dist-amiga/curl-*-amigaos/
+          if-no-files-found: error
