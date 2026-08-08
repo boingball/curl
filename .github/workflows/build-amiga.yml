@@ -23,7 +23,9 @@ jobs:
 
       - name: Compile 68030 curl with the Amiga SDK
         run: |
-          docker run --rm -v "$PWD":/work -w /work \
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -e USER=$(id -u) -e GROUP=$(id -g) \
             sacredbanana/amiga-compiler:m68k-amigaos \
             bash -c '
               set -e
