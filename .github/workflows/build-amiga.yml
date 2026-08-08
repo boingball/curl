@@ -33,12 +33,12 @@ jobs:
               echo "Toolchain prefix: $AMIGA_PREFIX"
               "$AMIGA_GCC" --version | head -1
 
-              # This image installs third-party Amiga SDK headers/libraries
-              # (including zlib) under $AMIGA_PREFIX/usr rather than GCCs
-              # default cross search paths. Keep the normal release script
-              # unchanged and expose those SDK directories to GCC for CI.
-              export C_INCLUDE_PATH="$AMIGA_PREFIX/usr/include${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
-              export LIBRARY_PATH="$AMIGA_PREFIX/usr/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+              # This Docker SDK keeps third-party headers/libraries such as
+              # zlib under $AMIGA_PREFIX/usr. The release builder accepts
+              # optional explicit SDK search flags while leaving normal
+              # known-good release builds unchanged when they are unset.
+              export AMIGA_CPPFLAGS="-I$AMIGA_PREFIX/usr/include"
+              export AMIGA_LDFLAGS="-L$AMIGA_PREFIX/usr/lib"
 
               if ! make -f Makefile.amiga 030 AMIGA_PREFIX="$AMIGA_PREFIX" PACKAGE=0; then
                 echo "===== build-amiga/030/config.log ====="
