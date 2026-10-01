@@ -7,6 +7,7 @@
 #   make -f Makefile.amiga aminet
 #   make -f Makefile.amiga aminet-lha
 #   make -f Makefile.amiga release-aminet-lha
+#   make -f Makefile.amiga release-aminet-lha RELEASE_VERSION=8.22.0
 #   make -f Makefile.amiga clean
 #
 SHELL := /bin/bash
@@ -18,6 +19,9 @@ PACKAGE ?= 1
 STRIP ?= 0
 REGEN ?= 1
 CLEAN_BUILD ?= 1
+# Package label override; does not modify the upstream curl version compiled into binaries.
+RELEASE_VERSION ?=
+export RELEASE_VERSION
 
 BUILD_SCRIPT := bash ./scripts/build-amiga-release.sh
 AMINET_SCRIPT := bash ./scripts/prepare-amiga-aminet.sh

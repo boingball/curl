@@ -20,7 +20,8 @@ Options:
 Environment overrides:
   DIST_ROOT       Release output directory
   AMINET_DATE     Six-digit DDMMYY upload date
-  AMINET_VERSION  Complete Aminet version field (override -DEV packaging label)
+  RELEASE_VERSION  Package version (may remove -DEV only for matching source)
+  AMINET_VERSION  Complete Aminet version field (defaults to package version)
   AMINET_REPLACES Package replaced by this upload
 EOF_USAGE
 }
@@ -35,7 +36,14 @@ done
 
 VERSION="$(awk '$1=="#define" && $2=="LIBCURL_VERSION" {gsub(/"/,"",$3); print $3; exit}' "$ROOT_DIR/include/curl/curlver.h")"
 [[ -n "$VERSION" ]] || { echo 'ERROR: could not determine curl version' >&2; exit 1; }
-SAFE_VERSION="${VERSION//[^A-Za-z0-9._-]/_}"
+RELEASE_VERSION="${RELEASE_VERSION:-$VERSION}"
+[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-DEV)?$ ]] || {
+  echo "ERROR: invalid RELEASE_VERSION: $RELEASE_VERSION" >&2; exit 1;
+}
+[[ "$RELEASE_VERSION" == "$VERSION" || ( "$VERSION" == "${RELEASE_VERSION}-DEV" && "$RELEASE_VERSION" != *-DEV ) ]] || {
+  echo "ERROR: RELEASE_VERSION $RELEASE_VERSION does not match source version $VERSION" >&2; exit 1;
+}
+SAFE_VERSION="${RELEASE_VERSION//[^A-Za-z0-9._-]/_}"
 RELEASE_NAME="curl-${SAFE_VERSION}-amigaos"
 STAGE_DIR="$DIST_ROOT/$RELEASE_NAME"
 TEMPLATE="$ROOT_DIR/packages/AmigaOS/curl.readme.in"
@@ -47,12 +55,12 @@ for required in curl curl.020 curl.030 curl.040 curl.060 \
   [[ -f "$STAGE_DIR/$required" ]] || { echo "ERROR: release missing $required" >&2; exit 1; }
 done
 
-if [[ "$VERSION" == *-DEV ]]; then
-  core="${VERSION%-DEV}"
+if [[ "$RELEASE_VERSION" == *-DEV ]]; then
+  core="${RELEASE_VERSION%-DEV}"
   core="${core%.0}"
   default_version="${core}-DEV-${AMINET_DATE:-$(date -u '+%d%m%y')}"
 else
-  default_version="$VERSION"
+  default_version="$RELEASE_VERSION"
 fi
 AMINET_VERSION="${AMINET_VERSION:-$default_version}"
 AMINET_REPLACES="${AMINET_REPLACES:-comm/tcp/curl-8.18-DEV-18112025.lha}"
@@ -71,7 +79,7 @@ if [[ -f "$STAGE_DIR/FILES.txt" ]]; then
 fi
 
 sed \
-  -e "s|@VERSION@|$VERSION|g" \
+  -e "s|@VERSION@|$RELEASE_VERSION|g" \
   -e "s|@AMINET_VERSION@|$AMINET_VERSION|g" \
   -e "s|@AMINET_REPLACES@|$AMINET_REPLACES|g" \
   -e "s|@BUILD_DATE@|$(date -u '+%Y-%m-%d')|g" \
