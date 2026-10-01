@@ -152,7 +152,7 @@ if [[ "$RELEASE_VERSION" != "$VERSION" ]]; then
   trap restore_version_header EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  # Escape dots in the known source version before using sed's regex.
+  # Match only the full LIBCURL_VERSION definition; verify the result below.
   sed -i "s|^#define LIBCURL_VERSION \"$VERSION\"$|#define LIBCURL_VERSION \"$RELEASE_VERSION\"|" "$VERSION_HEADER"
   grep -Fqx "#define LIBCURL_VERSION \"$RELEASE_VERSION\"" "$VERSION_HEADER" ||
     die "could not apply temporary curlver.h version override"
