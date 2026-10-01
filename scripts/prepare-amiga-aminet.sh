@@ -14,13 +14,13 @@ Usage: $(basename "$0") [--lha]
 Prepare the latest AmigaOS curl release under dist-amiga for Aminet.
 
 Options:
-  --lha       Also create the Aminet LHA archive. Requires the lha command.
+  --lha       Also create the Aminet LHA archive. Requires jlha-utils (the jlha command).
   -h, --help  Show this help.
 
 Environment overrides:
   DIST_ROOT       Release output directory
   AMINET_DATE     Six-digit DDMMYY upload date
-  AMINET_VERSION  Complete Aminet version field
+  AMINET_VERSION  Complete Aminet version field (override -DEV packaging label)
   AMINET_REPLACES Package replaced by this upload
 EOF_USAGE
 }
@@ -91,8 +91,18 @@ printf '\nAminet package prepared\n=======================\n'
 printf 'Version field:  %s\nRelease drawer: %s\nReadme:         %s\n' "$AMINET_VERSION" "$STAGE_DIR" "$README_OUTER"
 
 if ((CREATE_LHA)); then
-  command -v lha >/dev/null 2>&1 || { echo 'ERROR: lha command is not installed' >&2; exit 1; }
-  (cd "$DIST_ROOT" && rm -f "${AMINET_BASENAME}.lha" && lha a -r "${AMINET_BASENAME}.lha" "$RELEASE_NAME")
+  # Ubuntu's lha may be Lhasa (extract-only); use jlha for archive creation.
+  command -v jlha >/dev/null 2>&1 || {
+    echo 'ERROR: jlha command not found; install jlha-utils' >&2
+    exit 1
+  }
+  (
+    cd "$DIST_ROOT"
+    rm -f -- "${AMINET_BASENAME}.lha"
+    jlha a "${AMINET_BASENAME}.lha" "$RELEASE_NAME"
+    [[ -s "${AMINET_BASENAME}.lha" ]] || { echo 'ERROR: empty or missing LHA archive' >&2; exit 1; }
+    jlha t "${AMINET_BASENAME}.lha"
+  )
   printf 'LHA archive:    %s/%s.lha\n' "$DIST_ROOT" "$AMINET_BASENAME"
 else
   printf 'LHA filename:   %s/%s.lha\n' "$DIST_ROOT" "$AMINET_BASENAME"
