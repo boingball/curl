@@ -28,7 +28,6 @@
 #include "cfilters.h"
 #include "multiif.h"
 
-#include "cf-dns.h"
 #include "cf-recvbuf.h"
 #include "cf-socket.h"
 #include "cf-setup.h"
@@ -42,6 +41,7 @@
 #include "progress.h"
 #include "socks.h"
 #include "curlx/strparse.h"
+#include "vdns/cf-dns.h"
 #include "vtls/vtls.h"
 #include "vquic/vquic.h"
 #include "curlx/strcopy.h"
@@ -92,8 +92,7 @@ static struct curl_trc_feat Curl_trc_feat_ids = {
 
 static size_t trc_print_ids(struct Curl_easy *data, char *buf, size_t maxlen)
 {
-  curl_off_t cid = data->conn ?
-                   data->conn->connection_id : data->state.recent_conn_id;
+  curl_off_t cid = data->state.lastconnect_id;
   if(data->id >= 0) {
     if(cid >= 0)
       return curl_msnprintf(buf, maxlen, CURL_TRC_FMT_IDSDC, data->id, cid);
@@ -219,6 +218,12 @@ struct curl_trc_feat Curl_trc_feat_dns = {
   "DNS",
   CURL_LOG_LVL_NONE,
 };
+#ifndef CURL_DISABLE_DOH
+struct curl_trc_feat Curl_trc_feat_doh = {
+  "DoH",
+  CURL_LOG_LVL_NONE,
+};
+#endif
 struct curl_trc_feat Curl_trc_feat_timer = {
   "TIMER",
   CURL_LOG_LVL_NONE,
@@ -302,9 +307,6 @@ static const char * const Curl_trc_timer_names[] = {
   "100_TIMEOUT",
   "ASYNC_NAME",
   "CONNECTTIMEOUT",
-  "DNS_PER_NAME",
-  "DNS_PER_NAME2",
-  "HAPPY_EYEBALLS_DNS",
   "HAPPY_EYEBALLS",
   "MULTI_PENDING",
   "SPEEDCHECK",
@@ -320,7 +322,7 @@ static const char *trc_timer_name(int tid)
 {
   if((tid >= 0) && ((size_t)tid < CURL_ARRAYSIZE(Curl_trc_timer_names)))
     return Curl_trc_timer_names[(size_t)tid];
-  return "UNKNOWN?";
+  return "TIMER-???";
 }
 
 void Curl_trc_timer(struct Curl_easy *data, int tid, const char *fmt, ...)
@@ -337,15 +339,15 @@ void Curl_trc_timer(struct Curl_easy *data, int tid, const char *fmt, ...)
 
 void Curl_trc_easy_timers(struct Curl_easy *data)
 {
-  if(CURL_TRC_TIMER_is_verbose(data)) {
-    struct Curl_llist_node *e = Curl_llist_head(&data->state.timeoutlist);
-    if(e) {
-      const struct curltime *pnow = Curl_pgrs_now(data);
-      while(e) {
-        struct time_node *n = Curl_node_elem(e);
-        e = Curl_node_next(e);
-        CURL_TRC_TIMER(data, n->eid, "expires in %" FMT_TIMEDIFF_T "us",
-                       curlx_ptimediff_us(&n->time, pnow));
+  if(CURL_TRC_TIMER_is_verbose(data) && data->multi) {
+    if(data->state.timeouts.first < EXPIRE_LAST) {
+      struct expire_timers *timeouts = &data->state.timeouts;
+      timediff_t base_us =
+        Curl_timeouts_offset_us(&data->multi->timeouts, Curl_pgrs_now(data));
+      uint8_t id = data->state.timeouts.first;
+      for(; id < EXPIRE_LAST; id = timeouts->next[id]) {
+        CURL_TRC_TIMER(data, id, "expires in %" FMT_TIMEDIFF_T "us",
+                       timeouts->offset_us[id] - base_us);
       }
     }
   }
@@ -530,6 +532,9 @@ static struct trc_feat_def trc_feats[] = {
   { &Curl_trc_feat_read,      TRC_CT_NONE },
   { &Curl_trc_feat_write,     TRC_CT_NONE },
   { &Curl_trc_feat_dns,       TRC_CT_NETWORK },
+#ifndef CURL_DISABLE_DOH
+  { &Curl_trc_feat_doh,       TRC_CT_NETWORK },
+#endif
   { &Curl_trc_feat_timer,     TRC_CT_NETWORK },
 #ifdef USE_THREADS
   { &Curl_trc_feat_threads,   TRC_CT_NONE },
@@ -652,10 +657,6 @@ static CURLcode trc_opt(const char *config)
       trc_apply_level_by_category(TRC_CT_NETWORK, lvl);
     else if(curlx_str_casecompare(&out, "proxy"))
       trc_apply_level_by_category(TRC_CT_PROXY, lvl);
-    else if(curlx_str_casecompare(&out, "doh")) {
-      struct Curl_str dns = { "dns", 3 };
-      trc_apply_level_by_name(&dns, lvl);
-    }
     else
       trc_apply_level_by_name(&out, lvl);
 

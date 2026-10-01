@@ -32,7 +32,7 @@
 #ifdef USE_MBEDTLS
 #include <mbedtls/version.h>
 #if MBEDTLS_VERSION_NUMBER < 0x03020000
-#error "mbedTLS 3.2.0 or later required"
+#error "mbedTLS 3.2.0 or greater required"
 #endif
 #include <psa/crypto_config.h>
 #endif
@@ -382,12 +382,11 @@ static CURLcode my_sha256_init(void *in)
   return CURLE_OK;
 }
 
-/*
-   Process a block of memory though the hash
+/* Process a block of memory though the hash
    @param md     The hash state
    @param in     The data to hash
    @param inlen  The length of the data (octets)
-*/
+ */
 static void my_sha256_update(void *ctx,
                              const unsigned char *in,
                              unsigned int len)
@@ -422,12 +421,11 @@ static void my_sha256_update(void *ctx,
   }
 }
 
-/*
-   Terminate the hash to get the digest
+/* Terminate the hash to get the digest
    @param md  The hash state
    @param out [out] The destination of the hash (32 bytes)
    @return 0 if successful
-*/
+ */
 static void my_sha256_final(unsigned char *out, void *ctx)
 {
   struct sha256_state *md = ctx;

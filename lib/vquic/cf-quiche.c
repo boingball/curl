@@ -32,7 +32,6 @@
 #include "uint-hash.h"
 #include "urldata.h"
 #include "cfilters.h"
-#include "cf-dns.h"
 #include "cf-socket.h"
 #include "curl_trc.h"
 #include "rand.h"
@@ -43,6 +42,7 @@
 #include "http.h"
 #include "http1.h"
 #include "sockaddr.h"
+#include "vdns/cf-dns.h"
 #include "vquic/vquic.h"
 #include "vquic/vquic_int.h"
 #include "vquic/vquic-tls.h"
@@ -94,6 +94,7 @@ struct cf_quiche_ctx {
   BIT(goaway);                       /* got GOAWAY from server */
   BIT(x509_store_setup);             /* if x509 store has been set up */
   BIT(shutdown_started);             /* queued shutdown packets */
+  BIT(stats_reported);               /* connect statistics reported */
 };
 
 #ifdef DEBUG_QUICHE
@@ -651,7 +652,7 @@ struct recv_ctx {
 static CURLcode cf_quiche_recv_pkts(const unsigned char *buf, size_t buflen,
                                     size_t gso_size,
                                     struct sockaddr_storage *remote_addr,
-                                    socklen_t remote_addrlen, int ecn,
+                                    socklen_t remote_addrlen, uint8_t ecn,
                                     void *userp)
 {
   struct recv_ctx *r = userp;
@@ -866,7 +867,7 @@ static CURLcode recv_closed_stream(struct Curl_cfilter *cf,
     if(stream->error3 == CURL_H3_ERR_REQUEST_REJECTED) {
       infof(data, "HTTP/3 stream %" PRIu64 " refused by server, try again "
             "on a new connection", stream->id);
-      connclose(cf->conn, "REFUSED_STREAM"); /* do not use this anymore */
+      connclose(cf->conn); /* do not use this anymore */
       data->state.refused_stream = TRUE;
       return CURLE_RECV_ERROR; /* trigger Curl_retry_request() later */
     }
@@ -1011,9 +1012,9 @@ static CURLcode h3_open_stream(struct Curl_cfilter *cf,
   DEBUGASSERT(stream);
 
   result = Curl_h1_req_parse_read(&stream->h1, buf, blen, NULL,
-                                  !data->state.http_ignorecustom ?
-                                  data->set.str[STRING_CUSTOMREQUEST] : NULL,
-                                  0, pnwritten);
+    !data->state.http_ignorecustom ?
+    CURL_EASY_STR(data, STRING_CUSTOMREQUEST) : NULL,
+    0, pnwritten);
   if(result)
     goto out;
   if(!stream->h1.done) {
@@ -1254,6 +1255,14 @@ static CURLcode cf_quiche_cntrl(struct Curl_cfilter *cf,
       Curl_conn_set_multiplex(cf->conn);
     }
     break;
+  case CF_CTRL_REPORT_STATS:
+    if(cf->connected && !ctx->stats_reported &&
+       (ctx->handshake_at.tv_sec || ctx->handshake_at.tv_usec)) {
+      Curl_pgrsTimeWas(data, TIMER_CONNECT, ctx->q.first_byte_at);
+      Curl_pgrsTimeWas(data, TIMER_APPCONNECT, ctx->handshake_at);
+      ctx->stats_reported = TRUE;
+    }
+    break;
   default:
     break;
   }
@@ -1298,9 +1307,8 @@ static CURLcode cf_quiche_ctx_open(struct Curl_cfilter *cf,
     10 * QUIC_MAX_STREAMS * H3_STREAM_WINDOW_SIZE);
   quiche_config_set_max_stream_window(ctx->cfg, 10 * H3_STREAM_WINDOW_SIZE);
   quiche_config_set_application_protos(ctx->cfg,
-                       (uint8_t *)CURL_UNCONST(QUICHE_H3_APPLICATION_PROTOCOL),
-                                       sizeof(QUICHE_H3_APPLICATION_PROTOCOL)
-                                       - 1);
+                      (uint8_t *)CURL_UNCONST(QUICHE_H3_APPLICATION_PROTOCOL),
+                                 CURL_CSTRLEN(QUICHE_H3_APPLICATION_PROTOCOL));
 
   result = Curl_vquic_tls_init(&ctx->tls, cf, data, &ctx->ssl_peer,
                                &ALPN_SPEC_H3, NULL, NULL, cf, NULL);
@@ -1351,7 +1359,7 @@ static CURLcode cf_quiche_ctx_open(struct Curl_cfilter *cf,
     unsigned alpn_len, offset = 0;
 
     /* Replace each ALPN length prefix by a comma. */
-    while(offset < sizeof(alpn_protocols) - 1) {
+    while(offset < CURL_CSTRLEN(alpn_protocols)) {
       alpn_len = alpn_protocols[offset];
       alpn_protocols[offset] = ',';
       offset += 1 + alpn_len;
@@ -1551,18 +1559,6 @@ static CURLcode cf_quiche_query(struct Curl_cfilter *cf,
     else
       *pres1 = -1;
     return CURLE_OK;
-  case CF_QUERY_TIMER_CONNECT: {
-    struct curltime *when = pres2;
-    if(ctx->q.got_first_byte)
-      *when = ctx->q.first_byte_at;
-    return CURLE_OK;
-  }
-  case CF_QUERY_TIMER_APPCONNECT: {
-    struct curltime *when = pres2;
-    if(cf->connected)
-      *when = ctx->handshake_at;
-    return CURLE_OK;
-  }
   case CF_QUERY_HTTP_VERSION:
     *pres1 = 30;
     return CURLE_OK;

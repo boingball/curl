@@ -36,7 +36,7 @@
 
 #include <mbedtls/version.h>
 #if MBEDTLS_VERSION_NUMBER < 0x03020000
-#error "mbedTLS 3.2.0 or later required"
+#error "mbedTLS 3.2.0 or greater required"
 #endif
 #include <psa/crypto_config.h>
 #include <mbedtls/net_sockets.h>
@@ -268,7 +268,7 @@ static uint16_t mbed_cipher_suite_walk_str(const char **str, const char **end)
   static const char ecjpake_suite[] = "TLS_ECJPAKE_WITH_AES_128_CCM_8";
 
   if(!id) {
-    if((len == sizeof(ecjpake_suite) - 1) &&
+    if((len == CURL_CSTRLEN(ecjpake_suite)) &&
        curl_strnequal(ecjpake_suite, *str, len))
       id = MBEDTLS_TLS_ECJPAKE_WITH_AES_128_CCM_8;
   }
@@ -453,9 +453,11 @@ static int mbed_verify_cb(void *ptr, mbedtls_x509_crt *crt,
       mbed_extract_certinfo(data, crt);
   }
 
+  /* `verifypeer` and `verifyhost` are independent, so clear the flags of a
+     disabled check only. The name mismatch belongs to `verifyhost`. */
   if(!conn_config->verifypeer)
-    *flags = 0;
-  else if(!conn_config->verifyhost)
+    *flags &= MBEDTLS_X509_BADCERT_CN_MISMATCH;
+  if(!conn_config->verifyhost)
     *flags &= ~MBEDTLS_X509_BADCERT_CN_MISMATCH;
 
   if(*flags) {
@@ -1073,10 +1075,11 @@ static CURLcode mbed_connect_step2(struct Curl_cfilter *cf,
 #ifdef HAVE_PINNED_PUBKEY
 #ifndef CURL_DISABLE_PROXY
   const char * const pinnedpubkey = Curl_ssl_cf_is_proxy(cf) ?
-    data->set.str[STRING_SSL_PINNEDPUBLICKEY_PROXY] :
-    data->set.str[STRING_SSL_PINNEDPUBLICKEY];
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY_PROXY) :
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY);
 #else
-  const char * const pinnedpubkey = data->set.str[STRING_SSL_PINNEDPUBLICKEY];
+  const char * const pinnedpubkey =
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY);
 #endif
 #endif
 

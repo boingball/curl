@@ -34,10 +34,10 @@
 #include <wolfssl/version.h>
 
 #if LIBWOLFSSL_VERSION_HEX < 0x05000000 /* wolfSSL 5.0.0 (2021-11-01) */
-#error "wolfSSL version should be at least 5.0.0"
+#error "wolfSSL 5.0.0 or greater required"
 #endif
 #if defined(OPENSSL_COEXIST) && LIBWOLFSSL_VERSION_HEX < 0x05007006
-#error "wolfSSL 5.7.6 or newer is required to coexist with OpenSSL"
+#error "wolfSSL 5.7.6 or greater required to coexist with OpenSSL"
 #endif
 
 /* To determine what functions are available we rely on one or both of:
@@ -55,8 +55,8 @@
 
 #include "urldata.h"
 #include "curl_trc.h"
-#include "httpsrr.h"
-#include "cf-dns.h"
+#include "vdns/cf-dns.h"
+#include "vdns/httpsrr.h"
 #include "vtls/vtls.h"
 #include "vtls/vtls_int.h"
 #include "vtls/vtls_scache.h"
@@ -162,7 +162,8 @@ static int wssl_tls13_secret_callback(SSL *ssl, int id,
     return 0;
   }
 
-  Curl_tls_keylog_write(label, client_random, secret, secretSz);
+  Curl_tls_keylog_write(label, client_random, sizeof(client_random),
+                        secret, secretSz);
   return 0;
 }
 #endif /* HAVE_SECRET_CALLBACK && WOLFSSL_TLS13 */
@@ -203,7 +204,7 @@ static void wssl_log_tls12_secret(WOLFSSL *ssl)
     return;
   }
 
-  Curl_tls_keylog_write("CLIENT_RANDOM", cr, ms, msLen);
+  Curl_tls_keylog_write("CLIENT_RANDOM", cr, crLen, ms, msLen);
 }
 #endif /* OPENSSL_EXTRA */
 
@@ -591,16 +592,12 @@ static CURLcode wssl_populate_x509_store(struct Curl_cfilter *cf,
     /* CURLOPT_CAINFO_BLOB overrides CURLOPT_CAINFO */
     (ca_info_blob ? NULL : conn_config->CAfile);
   const char * const ssl_capath = conn_config->CApath;
-  struct ssl_config_data *ssl_config = Curl_ssl_cf_get_config(cf, data);
   bool imported_native_ca = FALSE;
   bool imported_ca_info_blob = FALSE;
 
-  /* We do not want to do this again, no matter the outcome */
-  wssl->x509_store_setup = TRUE;
-
 #ifndef NO_FILESYSTEM
   /* load native CA certificates */
-  if(ssl_config->native_ca_store) {
+  if(conn_config->native_ca_store) {
 #ifdef WOLFSSL_SYS_CA_CERTS
     if(wolfSSL_CTX_load_system_CA_certs(wssl->ssl_ctx) != WOLFSSL_SUCCESS) {
       infof(data, "error importing native CA store, continuing anyway");
@@ -686,7 +683,7 @@ struct wssl_x509_share {
 static void wssl_x509_share_free(void *key, size_t key_len, void *p)
 {
   struct wssl_x509_share *share = p;
-  DEBUGASSERT(key_len == (sizeof(MPROTO_WSSL_X509_KEY) - 1));
+  DEBUGASSERT(key_len == CURL_CSTRLEN(MPROTO_WSSL_X509_KEY));
   DEBUGASSERT(!memcmp(MPROTO_WSSL_X509_KEY, key, key_len));
   (void)key;
   (void)key_len;
@@ -730,7 +727,7 @@ static WOLFSSL_X509_STORE *wssl_get_cached_x509_store(struct Curl_cfilter *cf,
   DEBUGASSERT(multi);
   share = multi ? Curl_hash_pick(&multi->proto_hash,
                                  CURL_UNCONST(MPROTO_WSSL_X509_KEY),
-                                 sizeof(MPROTO_WSSL_X509_KEY) - 1) : NULL;
+                                 CURL_CSTRLEN(MPROTO_WSSL_X509_KEY)) : NULL;
   if(share && share->store &&
      !wssl_cached_x509_store_expired(data, share) &&
      !wssl_cached_x509_store_different(cf, share)) {
@@ -753,7 +750,7 @@ static void wssl_set_cached_x509_store(struct Curl_cfilter *cf,
     return;
   share = Curl_hash_pick(&multi->proto_hash,
                          CURL_UNCONST(MPROTO_WSSL_X509_KEY),
-                         sizeof(MPROTO_WSSL_X509_KEY) - 1);
+                         CURL_CSTRLEN(MPROTO_WSSL_X509_KEY));
 
   if(!share) {
     share = curlx_calloc(1, sizeof(*share));
@@ -761,7 +758,7 @@ static void wssl_set_cached_x509_store(struct Curl_cfilter *cf,
       return;
     if(!Curl_hash_add2(&multi->proto_hash,
                        CURL_UNCONST(MPROTO_WSSL_X509_KEY),
-                       sizeof(MPROTO_WSSL_X509_KEY) - 1,
+                       CURL_CSTRLEN(MPROTO_WSSL_X509_KEY),
                        share, wssl_x509_share_free)) {
       curlx_free(share);
       return;
@@ -800,6 +797,9 @@ CURLcode Curl_wssl_setup_x509_store(struct Curl_cfilter *cf,
   WOLFSSL_X509_STORE *cached_store;
   bool cache_criteria_met;
 
+  /* We do not want to do this again, no matter the outcome */
+  wssl->x509_store_setup = TRUE;
+
   /* Consider the X509 store cacheable if it comes exclusively from a CAfile,
      or no source is provided and we are falling back to wolfSSL's built-in
      default. */
@@ -808,7 +808,7 @@ CURLcode Curl_wssl_setup_x509_store(struct Curl_cfilter *cf,
     !conn_config->CApath &&
     !conn_config->ca_info_blob &&
     !ssl_config->primary.CRLfile &&
-    !ssl_config->native_ca_store;
+    !conn_config->native_ca_store;
 
   cached_store = cache_criteria_met ? wssl_get_cached_x509_store(cf, data)
                                     : NULL;
@@ -1259,7 +1259,7 @@ static CURLcode wssl_init_ech(struct wssl_ctx *wctx,
 {
   int trying_ech_now = 0;
 
-  if(data->set.str[STRING_ECH_PUBLIC]) {
+  if(CURL_EASY_STR(data, STRING_ECH_PUBLIC)) {
     infof(data, "ECH: outername not (yet) supported"
           " with wolfSSL");
     return CURLE_SSL_CONNECT_ERROR;
@@ -1268,12 +1268,12 @@ static CURLcode wssl_init_ech(struct wssl_ctx *wctx,
     infof(data, "ECH: GREASE is done by default by"
           " wolfSSL: no need to ask");
   }
-  if(data->set.tls_ech && data->set.str[STRING_ECH_CONFIG]) {
-    char *b64val = data->set.str[STRING_ECH_CONFIG];
+  if(data->set.tls_ech && CURL_EASY_STR(data, STRING_ECH_CONFIG)) {
+    const char *b64val = CURL_EASY_STR(data, STRING_ECH_CONFIG);
     word32 b64len = 0;
 
     b64len = (word32)strlen(b64val);
-    if(b64len && wolfSSL_SetEchConfigsBase64(wctx->ssl, b64val,
+    if(b64len && wolfSSL_SetEchConfigsBase64(wctx->ssl, CURL_UNCONST(b64val),
                                              b64len) != WOLFSSL_SUCCESS) {
       if(data->set.tls_ech == CURLECH_HARD)
         return CURLE_SSL_CONNECT_ERROR;
@@ -1476,7 +1476,7 @@ bool Curl_wssl_need_httpsrr(struct Curl_easy *data)
   if(!CURLECH_ENABLED(data))
     return FALSE;
   if((data->set.tls_ech == CURLECH_GREASE) ||
-     data->set.str[STRING_ECH_CONFIG])
+     CURL_EASY_STR(data, STRING_ECH_CONFIG))
     return FALSE;
   return TRUE;
 #else
@@ -1579,10 +1579,11 @@ CURLcode Curl_wssl_verify_pinned(struct Curl_cfilter *cf,
   CURLcode result = CURLE_OK;
 #ifndef CURL_DISABLE_PROXY
   const char * const pinnedpubkey = Curl_ssl_cf_is_proxy(cf) ?
-    data->set.str[STRING_SSL_PINNEDPUBLICKEY_PROXY] :
-    data->set.str[STRING_SSL_PINNEDPUBLICKEY];
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY_PROXY) :
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY);
 #else
-  const char * const pinnedpubkey = data->set.str[STRING_SSL_PINNEDPUBLICKEY];
+  const char * const pinnedpubkey =
+    CURL_EASY_STR(data, STRING_SSL_PINNEDPUBLICKEY);
   (void)cf;
 #endif
 
@@ -1985,7 +1986,7 @@ static CURLcode wssl_shutdown(struct Curl_cfilter *cf,
     break;
   case WOLFSSL_ERROR_NONE: /* did not get anything */
   case WOLFSSL_ERROR_WANT_READ:
-    /* wolfSSL has send its notify and now wants to read the reply
+    /* wolfSSL has sent its notify and now wants to read the reply
      * from the server. We are not really interested in that. */
     CURL_TRC_CF(data, cf, "SSL shutdown sent, want receive");
     connssl->io_need = CURL_SSL_IO_NEED_RECV;

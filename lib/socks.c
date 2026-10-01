@@ -38,9 +38,9 @@
 #include "curl_trc.h"
 #include "select.h"
 #include "cfilters.h"
-#include "cf-dns.h"
 #include "connect.h"
 #include "socks.h"
+#include "vdns/cf-dns.h"
 #include "curlx/inet_pton.h"
 
 /* for the (SOCKS) connect state machine */
@@ -932,7 +932,7 @@ static CURLproxycode socks5_recv_resp1(struct socks_ctx *sx,
      o IPv4 address: 0x01, BND.ADDR = 4-byte
      o domain name:  0x03, BND.ADDR = [ 1-byte length, string ]
      o IPv6 address: 0x04, BND.ADDR = 16-byte
-  */
+   */
   if(resp[0] != 5) { /* version */
     failf(data, "SOCKS5 reply has wrong version, version should be 5.");
     return CURLPX_BAD_VERSION;
@@ -1159,9 +1159,7 @@ static void socks_proxy_ctx_free(struct socks_ctx *ctx)
    the next magic steps. If 'done' is not set TRUE, it is not done yet and
    must be called again.
 
-   Note: this function's sub-functions call failf()
-
-*/
+   Note: this function's sub-functions call failf() */
 static CURLcode socks_proxy_cf_connect(struct Curl_cfilter *cf,
                                        struct Curl_easy *data,
                                        bool *done)
@@ -1198,7 +1196,7 @@ static CURLcode socks_proxy_cf_connect(struct Curl_cfilter *cf,
 
   if(pxresult) {
     result = CURLE_PROXY;
-    data->info.pxcode = pxresult;
+    data->info.pxcode = (uint8_t)pxresult;
     goto out;
   }
   else if(ctx->state != SOCKS_ST_SUCCESS)

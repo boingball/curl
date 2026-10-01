@@ -174,6 +174,11 @@ a multi handle is destroyed. This implicitly triggers for easy handles
 that are run via easy_perform. The value of the environment variable
 gives the shutdown timeout in milliseconds.
 
+## `CURL_DBG_HE_AAAA_AWAIT_MS`
+
+Overrides the time delaying a connect for AAAA resolve results to arrive
+before continuing with Happy Eyeballing.
+
 ## `CURL_DBG_RESOLV_MAX_THREADS`
 
 Overrides the maximum number of threads for resolver.
@@ -197,6 +202,11 @@ eligible for negative DNS caching, instead of a transient failure.
 
 Make libcurl fail a resolve for IPv6 only.
 
+## `CURL_DBG_THRDPOOL_FAIL_STARTS`
+
+Fail this many thread starts in a thread pool, as if the system
+refused to spawn more threads. Read when the pool is created.
+
 ## `CURL_QUICK_EXIT`
 
 Make `curl` use the quick exit option, even when built in debug mode.
@@ -210,3 +220,7 @@ answer to arrive before starting any connect attempt.
 
 When passing `--ssl-reqd`, clear it for the first URL in a curl command.
 This allows testing of connection reuse in mixed `STARTTLS` needs.
+
+## `CURL_DBG_SUPPRESS_CONNECT_HDS`
+
+Existence of this variable suppresses the collection of CONNECT headers.

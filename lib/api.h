@@ -57,6 +57,8 @@ typedef enum {
   CURL_EAPI_FN_easy_cleanup,
   CURL_EAPI_FN_easy_duphandle,
   CURL_EAPI_FN_easy_getinfo,
+  CURL_EAPI_FN_easy_header,
+  CURL_EAPI_FN_easy_nextheader,
   CURL_EAPI_FN_easy_pause,
   CURL_EAPI_FN_easy_perform_ev,
   CURL_EAPI_FN_easy_perform,
@@ -132,6 +134,7 @@ typedef enum {
   CURL_CBAPI_FN_LAST
 } Curl_cbapi_fn;
 
+/* EAPI */
 
 #define CURL_EAPI_MAX_RECURSION       7
 
@@ -151,6 +154,9 @@ bool Curl_eapi_enter(struct Curl_eapi_guard *guard,
                      CURLcode *presult);
 void Curl_eapi_leave(struct Curl_eapi_guard *guard);
 
+/* Convert an EAPI failure to a header API result */
+CURLHcode Curl_eapi_hcode(CURLcode result);
+
 /* Curl_eapi_enter() checks for curl being NULL, but windows compiler
  * analyzers do not realize this. *sigh* */
 #define CURL_EAPI_ENTER(g, curl, fn, r) \
@@ -158,6 +164,7 @@ void Curl_eapi_leave(struct Curl_eapi_guard *guard);
 #define CURL_EAPI_LEAVE(g) \
   Curl_eapi_leave(g)
 
+/* MAPI */
 
 #define CURL_MAPI_MAX_RECURSION       15
 
@@ -184,7 +191,6 @@ void Curl_mapi_leave(struct Curl_mapi_guard *guard);
 #define CURL_MAPI_LEAVE(g) \
   Curl_mapi_leave(g)
 
-
 void Curl_cbapi_enter(struct Curl_mapi_guard *guard,
                       struct Curl_easy *data,
                       struct Curl_multi *multi,
@@ -199,7 +205,6 @@ void Curl_cbapi_leave(struct Curl_mapi_guard *guard);
   Curl_cbapi_leave(g)
 #define CURL_CBAPI_MULTI_END(g) \
   Curl_cbapi_leave(g)
-
 
 bool Curl_api_is_in_callback(struct Curl_easy *data);
 bool Curl_api_multi_is_in_callback(struct Curl_multi *multi);

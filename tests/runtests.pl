@@ -967,6 +967,11 @@ sub citest_starttest {
     my $testname = (getpart("client", "name"))[0];
     chomp $testname;
 
+    if(length($testname) > 70) {
+        logmsg "ERROR: test $testnum has a too long name, wider than 70 columns\n";
+        return 1;
+    }
+
     # create test result in CI services
     if(azure_check_environment() && $AZURE_RUN_ID) {
         $AZURE_RESULT_ID = azure_create_test_result($ACURL, $AZURE_RUN_ID, $testnum, $testname);
@@ -974,6 +979,7 @@ sub citest_starttest {
     elsif(appveyor_check_environment()) {
         appveyor_create_test_result($ACURL, $testnum, $testname);
     }
+    return 0;
 }
 
 # Submit the test case result with the CI runner
@@ -1212,7 +1218,7 @@ sub singletest_count {
     }
 
     # At this point we have committed to run this test
-    logmsg sprintf("test %04d...", $testnum) if(!$automakestyle);
+    logmsg sprintf("test %04d ", $testnum) if(!$automakestyle);
 
     # name of the test
     my $testname = (getpart("client", "name"))[0];
@@ -1372,10 +1378,6 @@ sub singletest_check {
                 s/\r//;
                 s/\n/ /;
             }
-            my $v = join(@validstderr, "");
-            my $a = join(@actual, "");
-            @validstderr = $v;
-            @actual = $a;
         }
 
         if($hash{'nonewline'}) {
@@ -2006,7 +2008,9 @@ sub singletest {
 
         ###################################################################
         # Register the test case with the CI environment
-        citest_starttest($testnum);
+        if(citest_starttest($testnum)) {
+            return (-1, 0);
+        }
 
         if(runnerac_test_preprocess($runnerid, $testnum)) {
             logmsg "ERROR: runner $runnerid seems to have died\n";
@@ -2344,9 +2348,13 @@ if(@ARGV && $ARGV[-1] eq '$TFLAGS') {
 
 $args = join(' ', @ARGV);
 
+my $mintotalany = 0;
+
 $valgrind = checktestcmd("valgrind");
 my $number = 0;
 my $fromnum = -1;
+my $useshares;
+my $usepart;
 my @testthis;
 while(@ARGV) {
     if($ARGV[0] eq "-v") {
@@ -2440,6 +2448,7 @@ while(@ARGV) {
     elsif($ARGV[0] =~ /--min=(\d+)/) {
         my ($num) = ($1);
         $mintotal = $num;
+        $mintotalany = 1;
     }
     elsif($ARGV[0] eq "-n") {
         # no valgrind
@@ -2460,6 +2469,14 @@ while(@ARGV) {
 
         if($xtra =~ s/(\d+)$//) {
             $tortalloc = $1;
+        }
+    }
+    elsif($ARGV[0] =~ /^--subset=(\d+)\/(\d+)$/) {
+        # split all tests into $2 parts.
+        # this invoke then runs the part number $1 (0-indexed)
+        ($usepart, $useshares) = ($1, $2);
+        if($useshares < 1 || $usepart >= $useshares) {
+            die "illegal subset specified";
         }
     }
     elsif($ARGV[0] =~ /--shallow=(\d+)/) {
@@ -2743,8 +2760,11 @@ if(!$jobs) {
     setlogfunc(\&logmsg);
 }
 
-if(!$mintotal && $ENV{"CURL_TEST_MIN"}) {
+if(!$mintotalany && $ENV{"CURL_TEST_MIN"}) {
     $mintotal = $ENV{"CURL_TEST_MIN"};
+    if($useshares) {
+        $mintotal /= $useshares;
+    }
 }
 
 #######################################################################
@@ -2759,7 +2779,7 @@ if(!$listonly) {
 # Output information about the curl build
 #
 if(!$listonly && $buildinfo) {
-    if(open(my $fd, "<", "../buildinfo.txt")) {
+    if(open(my $fd, "<", '../buildinfo.txt')) {
         while(my $line = <$fd>) {
             chomp $line;
             if($line && $line !~ /^#/) {
@@ -2891,6 +2911,25 @@ if($scrambleorder) {
         $TESTCASES = join(" ", @all);
     }
     $TESTCASES = join(" ", @rand);
+}
+
+if($useshares) {
+    my @a = grep { length($_) } split(/ +/, $TESTCASES);
+    my $n = scalar(@a);
+
+    if($useshares < 1 || $usepart >= $useshares) {
+        die "illegal subset specified";
+    }
+
+    my $start = int(($n * $usepart) / $useshares);
+    my $end = int(($n * ($usepart + 1)) / $useshares); # one past last index
+    my $run = $end - $start;
+
+    printf STDERR "Subset: 1/%u of the tests (run %u tests out of %u). Part %u\n",
+        $useshares, $run, $n, $usepart;
+
+    my @s = $run ? @a[$start .. $end - 1] : ();
+    $TESTCASES = join(" ", @s);
 }
 
 # Display the contents of the given file.  Line endings are canonicalized

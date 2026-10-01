@@ -23,12 +23,6 @@
  ***************************************************************************/
 #include "unitcheck.h"
 
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifndef _WIN32
-#include <sys/socket.h>
-#endif
 #ifdef HAVE_ARPA_INET_H
 #include <arpa/inet.h>
 #endif
@@ -54,8 +48,6 @@ static int test_ntop(void)
   char ipv4res[sizeof("255.255.255.255")];
   unsigned char ipv6a[26];
   unsigned char ipv4a[5];
-  const char *ipv6ptr = 0;
-  const char *ipv4ptr = 0;
 
   ipv4res[0] = '\0';
   ipv4a[0] = 0xc0;
@@ -63,12 +55,9 @@ static int test_ntop(void)
   ipv4a[2] = 0x64;
   ipv4a[3] = 0x01;
   ipv4a[4] = 0x01;
-  ipv4ptr = curlx_inet_ntop(AF_INET, ipv4a, ipv4res, sizeof(ipv4res));
-  if(!ipv4ptr)
+  if(curlx_inet_ntop(AF_INET, ipv4a, ipv4res, sizeof(ipv4res)))
     return 1; /* fail */
-  if(ipv4ptr != ipv4res)
-    return 1; /* fail */
-  if(!ipv4ptr[0])
+  if(!ipv4res[0])
     return 1; /* fail */
   if(memcmp(ipv4res, "192.168.100.1", 13))
     return 1; /* fail */
@@ -86,12 +75,9 @@ static int test_ntop(void)
   ipv6a[14] = 0x76;
   ipv6a[15] = 0xc8;
   ipv6a[25] = 0x01;
-  ipv6ptr = curlx_inet_ntop(AF_INET6, ipv6a, ipv6res, sizeof(ipv6res));
-  if(!ipv6ptr)
+  if(curlx_inet_ntop(AF_INET6, ipv6a, ipv6res, sizeof(ipv6res)))
     return 1; /* fail */
-  if(ipv6ptr != ipv6res)
-    return 1; /* fail */
-  if(!ipv6ptr[0])
+  if(!ipv6res[0])
     return 1; /* fail */
   if(memcmp(ipv6res, "fe80::214:4fff:fe0b:76c8", 24))
     return 1; /* fail */
@@ -102,12 +88,9 @@ static int test_ntop(void)
   ipv6a[13] = 0x0;
   ipv6a[14] = 0x0;
   ipv6a[15] = 0x01;
-  ipv6ptr = curlx_inet_ntop(AF_INET6, ipv6a, ipv6res, sizeof(ipv6res));
-  if(!ipv6ptr)
+  if(curlx_inet_ntop(AF_INET6, ipv6a, ipv6res, sizeof(ipv6res)))
     return 1; /* fail */
-  if(ipv6ptr != ipv6res)
-    return 1; /* fail */
-  if(!ipv6ptr[0])
+  if(!ipv6res[0])
     return 1; /* fail */
   if(memcmp(ipv6res, "::127.0.0.1", 11))
     return 1; /* fail */

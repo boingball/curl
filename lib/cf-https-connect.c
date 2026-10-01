@@ -28,16 +28,16 @@
 #include "urldata.h"
 #include "curl_trc.h"
 #include "cfilters.h"
-#include "cf-dns.h"
 #include "cf-setup.h"
 #include "connect.h"
-#include "hostip.h"
-#include "httpsrr.h"
 #include "multiif.h"
 #include "cf-https-connect.h"
 #include "http2.h"
 #include "progress.h"
 #include "select.h"
+#include "vdns/cf-dns.h"
+#include "vdns/hostip.h"
+#include "vdns/httpsrr.h"
 #include "vquic/vquic.h"
 
 typedef enum {
@@ -52,7 +52,6 @@ struct cf_hc_baller {
   const char *name;
   struct Curl_cfilter *cf;
   CURLcode result;
-  struct curltime started;
   int reply_ms;
   uint8_t transport;
   enum alpnid alpn_id;
@@ -173,7 +172,6 @@ static void cf_hc_baller_init(struct cf_hc_baller *b,
   struct Curl_cfilter *save = cf->next;
 
   cf->next = NULL;
-  b->started = *Curl_pgrs_now(data);
   b->result = Curl_cf_setup_insert_after(cf, data, b->transport,
                                          CURL_CF_SSL_ENABLE);
   b->cf = cf->next;
@@ -238,7 +236,8 @@ static CURLcode baller_connected(struct Curl_cfilter *cf,
 }
 
 static bool time_to_start_baller2(struct Curl_cfilter *cf,
-                                  struct Curl_easy *data)
+                                  struct Curl_easy *data,
+                                  const struct curltime *pnow)
 {
   struct cf_hc_ctx *ctx = cf->ctx;
   timediff_t elapsed_ms;
@@ -253,7 +252,7 @@ static bool time_to_start_baller2(struct Curl_cfilter *cf,
     return TRUE;
   }
 
-  elapsed_ms = curlx_ptimediff_ms(Curl_pgrs_now(data), &ctx->started);
+  elapsed_ms = curlx_ptimediff_ms(pnow, &ctx->started);
   if(elapsed_ms >= ctx->hard_eyeballs_timeout_ms) {
     CURL_TRC_CF(data, cf, "%s inconclusive after %" FMT_TIMEDIFF_T ", "
                 "starting %s", ctx->ballers[0].name,
@@ -479,6 +478,7 @@ static CURLcode cf_hc_connect(struct Curl_cfilter *cf,
 {
   struct cf_hc_ctx *ctx = cf->ctx;
   CURLcode result = CURLE_OK;
+  const struct curltime *pnow = NULL;
 
   if(cf->connected) {
     *done = TRUE;
@@ -513,10 +513,12 @@ static CURLcode cf_hc_connect(struct Curl_cfilter *cf,
       goto out;
     }
     cf_hc_set_baller2(cf, data);
-    ctx->started = *Curl_pgrs_now(data);
+    pnow = Curl_pgrs_now(data);
+    ctx->started = *pnow;
     cf_hc_baller_init(&ctx->ballers[0], cf, data);
     if((ctx->baller_count > 1) || !ctx->ballers_complete) {
-      Curl_expire(data, ctx->soft_eyeballs_timeout_ms, EXPIRE_ALPN_EYEBALLS);
+      Curl_expire_set(data, EXPIRE_ALPN_EYEBALLS,
+                      ctx->soft_eyeballs_timeout_ms, pnow);
     }
     ctx->state = CF_HC_CONNECT;
     FALLTHROUGH();
@@ -533,7 +535,8 @@ static CURLcode cf_hc_connect(struct Curl_cfilter *cf,
       }
     }
 
-    if(time_to_start_baller2(cf, data)) {
+    pnow = Curl_pgrs_now(data);
+    if(time_to_start_baller2(cf, data, pnow)) {
       cf_hc_baller_init(&ctx->ballers[1], cf, data);
     }
 
@@ -652,26 +655,6 @@ static bool cf_hc_data_pending(struct Curl_cfilter *cf,
   return FALSE;
 }
 
-static struct curltime cf_get_max_baller_time(struct Curl_cfilter *cf,
-                                              struct Curl_easy *data,
-                                              int query)
-{
-  struct cf_hc_ctx *ctx = cf->ctx;
-  struct curltime t, tmax;
-  size_t i;
-
-  memset(&tmax, 0, sizeof(tmax));
-  for(i = 0; i < ctx->baller_count; i++) {
-    struct Curl_cfilter *cfb = ctx->ballers[i].cf;
-    memset(&t, 0, sizeof(t));
-    if(cfb && !cfb->cft->query(cfb, data, query, NULL, &t)) {
-      if((t.tv_sec || t.tv_usec) && curlx_ptimediff_us(&t, &tmax) > 0)
-        tmax = t;
-    }
-  }
-  return tmax;
-}
-
 static CURLcode cf_hc_query(struct Curl_cfilter *cf,
                             struct Curl_easy *data,
                             int query, int *pres1, void *pres2)
@@ -681,16 +664,6 @@ static CURLcode cf_hc_query(struct Curl_cfilter *cf,
 
   if(!cf->connected) {
     switch(query) {
-    case CF_QUERY_TIMER_CONNECT: {
-      struct curltime *when = pres2;
-      *when = cf_get_max_baller_time(cf, data, CF_QUERY_TIMER_CONNECT);
-      return CURLE_OK;
-    }
-    case CF_QUERY_TIMER_APPCONNECT: {
-      struct curltime *when = pres2;
-      *when = cf_get_max_baller_time(cf, data, CF_QUERY_TIMER_APPCONNECT);
-      return CURLE_OK;
-    }
     case CF_QUERY_NEED_FLUSH: {
       for(i = 0; i < ctx->baller_count; i++)
         if(cf_hc_baller_needs_flush(&ctx->ballers[i], data)) {
@@ -717,12 +690,26 @@ static CURLcode cf_hc_cntrl(struct Curl_cfilter *cf,
   size_t i;
 
   if(!cf->connected) {
-    for(i = 0; i < ctx->baller_count; i++) {
-      result = cf_hc_baller_cntrl(&ctx->ballers[i], data, event, arg1, arg2);
-      if(result && (result != CURLE_AGAIN))
-        goto out;
+    switch(event) {
+    case CF_CTRL_REPORT_STATS:
+      for(i = 0; i < ctx->baller_count; i++) {
+        /* Make the first baller that connected at network level report */
+        if(Curl_conn_cf_is_ip_connected(ctx->ballers[i].cf, data)) {
+          Curl_conn_cf_cntrl(ctx->ballers[i].cf, data, TRUE,
+                             event, arg1, arg2);
+          break;
+        }
+      }
+      break;
+    default:
+      for(i = 0; i < ctx->baller_count; i++) {
+        result = cf_hc_baller_cntrl(&ctx->ballers[i], data, event, arg1, arg2);
+        if(result && (result != CURLE_AGAIN))
+          goto out;
+      }
+      result = CURLE_OK;
+      break;
     }
-    result = CURLE_OK;
   }
 out:
   return result;
@@ -786,7 +773,7 @@ out:
 static CURLcode cf_hc_add(struct Curl_easy *data,
                           struct Curl_peer *destination,
                           struct connectdata *conn,
-                          int sockindex,
+                          int8_t sockindex,
                           uint8_t def_transport)
 {
   struct Curl_cfilter *cf;
@@ -809,7 +796,7 @@ out:
 CURLcode Curl_cf_https_setup(struct Curl_easy *data,
                              struct Curl_peer *destination,
                              struct connectdata *conn,
-                             int sockindex)
+                             int8_t sockindex)
 {
   CURLcode result = CURLE_OK;
 

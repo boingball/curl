@@ -110,7 +110,7 @@ static bool fix_excessive_path(const TCHAR *in, TCHAR **out)
   const wchar_t *in_w;
   wchar_t *fbuf = NULL;
 
-  /* MS documented "approximate" limit for the maximum path length */
+  /* MS-documented "approximate" limit for the maximum path length */
   const size_t max_path_len = 32767;
 
 #ifndef _UNICODE
@@ -284,6 +284,37 @@ HANDLE curlx_CreateFile(const char *filename,
                         dwFlagsAndAttributes,
                         hTemplateFile);
     CURLX_FREE(fixed);
+#ifdef UNICODE
+    curlx_free(filename_t);
+#endif
+  }
+
+  return handle;
+}
+
+HANDLE curlx_FindFirstFile(const char *filename,
+                           WIN32_FIND_DATA *find_data)
+{
+  HANDLE handle = INVALID_HANDLE_VALUE;
+
+#ifdef UNICODE
+  TCHAR *filename_t = curlx_convert_UTF8_to_wchar(filename);
+#else
+  const TCHAR *filename_t = filename;
+#endif
+
+  if(filename_t) {
+    TCHAR *fixed = NULL;
+    const TCHAR *target;
+
+    if(fix_excessive_path(filename_t, &fixed))
+      target = fixed;
+    else
+      target = filename_t;
+
+    handle = FindFirstFile(target, find_data);
+    CURLX_FREE(fixed);
+
 #ifdef UNICODE
     curlx_free(filename_t);
 #endif

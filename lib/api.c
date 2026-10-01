@@ -25,33 +25,39 @@
 
 #include "urldata.h"
 #include "api.h"
+#include "curl_threads.h"
 #include "multiif.h"
+#include "vtls/vtls_scache.h"
 
 struct Curl_eapi_fn_props {
   Curl_eapi_fn fn;
   uint8_t data_is_killed; /* easy handle is killed in call */
   uint8_t recurse;        /* may be called when another call is in progress */
   uint8_t no_event_cb;    /* may not be called during a multi event callback */
+  uint8_t no_scache_lock; /* may not be called with easy's vtls_scache
+                             locked by current thread */
 };
 
 static const struct Curl_eapi_fn_props eapi_fn_props[CURL_EAPI_FN_LAST] = {
-  /* function                   kill rec !ev */
-  { CURL_EAPI_FN_easy_cleanup,     1,  0,  0 },
-  { CURL_EAPI_FN_easy_duphandle,   0,  1,  0 },
-  { CURL_EAPI_FN_easy_getinfo,     0,  1,  0 },
-  { CURL_EAPI_FN_easy_pause,       0,  1,  1 },
-  { CURL_EAPI_FN_easy_perform_ev,  0,  0,  0 },
-  { CURL_EAPI_FN_easy_perform,     0,  0,  0 },
-  { CURL_EAPI_FN_easy_recv,        0,  0,  0 },
-  { CURL_EAPI_FN_easy_reset,       0,  0,  0 },
-  { CURL_EAPI_FN_easy_send,        0,  0,  0 },
-  { CURL_EAPI_FN_easy_setopt,      0,  1,  0 },
-  { CURL_EAPI_FN_easy_ssls_export, 0,  0,  0 },
-  { CURL_EAPI_FN_easy_ssls_import, 0,  0,  0 },
-  { CURL_EAPI_FN_easy_upkeep,      0,  0,  0 },
-  { CURL_EAPI_FN_ws_recv,          0,  1,  0 },
-  { CURL_EAPI_FN_ws_send,          0,  1,  0 },
-  { CURL_EAPI_FN_ws_start_frame,   0,  1,  0 },
+  /* function                   kill rec !ev !scach */
+  { CURL_EAPI_FN_easy_cleanup,     1,  0,  0,  0 },
+  { CURL_EAPI_FN_easy_duphandle,   0,  1,  0,  0 },
+  { CURL_EAPI_FN_easy_getinfo,     0,  1,  0,  0 },
+  { CURL_EAPI_FN_easy_header,      0,  1,  0,  0 },
+  { CURL_EAPI_FN_easy_nextheader,  0,  1,  0,  0 },
+  { CURL_EAPI_FN_easy_pause,       0,  1,  1,  0 },
+  { CURL_EAPI_FN_easy_perform_ev,  0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_perform,     0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_recv,        0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_reset,       0,  0,  0,  0 },
+  { CURL_EAPI_FN_easy_send,        0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_setopt,      0,  1,  0,  0 },
+  { CURL_EAPI_FN_easy_ssls_export, 0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_ssls_import, 0,  0,  0,  1 },
+  { CURL_EAPI_FN_easy_upkeep,      0,  0,  0,  1 },
+  { CURL_EAPI_FN_ws_recv,          0,  1,  0,  1 },
+  { CURL_EAPI_FN_ws_send,          0,  1,  0,  1 },
+  { CURL_EAPI_FN_ws_start_frame,   0,  1,  0,  0 },
 };
 
 struct Curl_mapi_fn_props {
@@ -59,29 +65,31 @@ struct Curl_mapi_fn_props {
   uint8_t multi_is_killed; /* multi handle is killed during call */
   uint8_t recurse;         /* may be called when another call is in progress */
   uint8_t allow_ntfy_cb;   /* may be called during a notify callback */
+  uint8_t no_scache_lock;  /* may not be called with multi's vtls_scache
+                              locked by current thread */
 };
 
 static const struct Curl_mapi_fn_props mapi_fn_props[CURL_MAPI_FN_LAST] = {
-  /* function                       kill rec ntfy */
-  { CURL_MAPI_FN_multi_add_handle,     0,  0,   1 },
-  { CURL_MAPI_FN_multi_assign,         0,  1,   1 },
-  { CURL_MAPI_FN_multi_cleanup,        1,  0,   0 },
-  { CURL_MAPI_FN_multi_fdset,          0,  0,   1 },
-  { CURL_MAPI_FN_multi_get_handles,    0,  1,   1 },
-  { CURL_MAPI_FN_multi_get_offt,       0,  1,   1 },
-  { CURL_MAPI_FN_multi_info_read,      0,  1,   1 },
-  { CURL_MAPI_FN_multi_notify_disable, 0,  1,   1 },
-  { CURL_MAPI_FN_multi_notify_enable,  0,  1,   1 },
-  { CURL_MAPI_FN_multi_perform,        0,  0,   0 },
-  { CURL_MAPI_FN_multi_poll,           0,  0,   1 },
-  { CURL_MAPI_FN_multi_remove_handle,  0,  0,   1 },
-  { CURL_MAPI_FN_multi_setopt,         0,  0,   1 },
-  { CURL_MAPI_FN_multi_socket_action,  0,  0,   0 },
-  { CURL_MAPI_FN_multi_socket_all,     0,  0,   0 },
-  { CURL_MAPI_FN_multi_socket,         0,  0,   0 },
-  { CURL_MAPI_FN_multi_timeout,        0,  0,   1 },
-  { CURL_MAPI_FN_multi_wait,           0,  0,   1 },
-  { CURL_MAPI_FN_multi_waitfds,        0,  0,   1 },
+  /* function                       kill rec ntfy !scach */
+  { CURL_MAPI_FN_multi_add_handle,     0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_assign,         0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_cleanup,        1,  0,   0,  1 },
+  { CURL_MAPI_FN_multi_fdset,          0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_get_handles,    0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_get_offt,       0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_info_read,      0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_notify_disable, 0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_notify_enable,  0,  1,   1,  0 },
+  { CURL_MAPI_FN_multi_perform,        0,  0,   0,  1 },
+  { CURL_MAPI_FN_multi_poll,           0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_remove_handle,  0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_setopt,         0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_socket_action,  0,  0,   0,  1 },
+  { CURL_MAPI_FN_multi_socket_all,     0,  0,   0,  1 },
+  { CURL_MAPI_FN_multi_socket,         0,  0,   0,  1 },
+  { CURL_MAPI_FN_multi_timeout,        0,  0,   1,  1 },
+  { CURL_MAPI_FN_multi_wait,           0,  0,   1,  0 },
+  { CURL_MAPI_FN_multi_waitfds,        0,  0,   1,  0 },
 };
 
 struct Curl_cbapi_fn_props {
@@ -219,7 +227,7 @@ bool Curl_eapi_enter(struct Curl_eapi_guard *guard,
     if(data->callstack.count) {
 #ifdef CURLVERBOSE
       DEBUGF(curl_mfprintf(stderr,
-        "EAPI guard: calling %u with call to %u ongoing\n", (uint16_t)fn,
+        "EAPI guard: calling %hu with call to %u ongoing\n", (uint16_t)fn,
         data->callstack.calls[data->callstack.count-1]));
 #endif
       result = CURLE_RECURSIVE_API_CALL;
@@ -229,7 +237,8 @@ bool Curl_eapi_enter(struct Curl_eapi_guard *guard,
 #ifdef CURLVERBOSE
 
       DEBUGF(curl_mfprintf(stderr,
-        "EAPI guard: calling %u with multi call to %u ongoing\n", (uint16_t)fn,
+        "EAPI guard: calling %hu with multi call to %u ongoing\n",
+        (uint16_t)fn,
         data->multi->callstack.calls[data->multi->callstack.count-1]));
 #endif
       result = CURLE_RECURSIVE_API_CALL;
@@ -241,12 +250,25 @@ bool Curl_eapi_enter(struct Curl_eapi_guard *guard,
     /* Not allowed to be invoked while an event cb is ongoing */
 #ifdef CURLVERBOSE
       DEBUGF(curl_mfprintf(stderr,
-        "EAPI guard: calling %u while event callback ongoing\n",
+        "EAPI guard: calling %hu while event callback ongoing\n",
         (uint16_t)fn));
 #endif
     result = CURLE_RECURSIVE_API_CALL;
     goto out;
   }
+
+#if defined(USE_SSL) && defined(USE_MUTEX)
+  if(fn_props->no_scache_lock &&
+     Curl_ssl_scache_is_locked_by_current_thread(data)) {
+#ifdef CURLVERBOSE
+      DEBUGF(curl_mfprintf(stderr,
+        "EAPI guard: calling %hu while vtls_scache is locked by "
+        "current thread\n", (uint16_t)fn));
+#endif
+    result = CURLE_RECURSIVE_API_CALL;
+    goto out;
+  }
+#endif
 
   /* all fine, add to data's callstack */
   if(data->callstack.count >= CURL_EAPI_MAX_RECURSION) {
@@ -283,6 +305,24 @@ void Curl_eapi_leave(struct Curl_eapi_guard *guard)
   }
 }
 
+CURLHcode Curl_eapi_hcode(CURLcode result)
+{
+  switch(result) {
+  case CURLE_OK:
+    return CURLHE_OK;
+  case CURLE_BAD_FUNCTION_ARGUMENT:
+    return CURLHE_BAD_ARGUMENT;
+  case CURLE_OUT_OF_MEMORY:
+    return CURLHE_OUT_OF_MEMORY;
+  case CURLE_NOT_BUILT_IN:
+    return CURLHE_NOT_BUILT_IN;
+  default:
+    /* Unfortunately, we cannot convert RECURSIVE_API_CALL,
+     * but since the header API is reentrant, this should not happen. */
+    return CURLHE_BAD_ARGUMENT;
+  }
+}
+
 bool Curl_mapi_enter(struct Curl_mapi_guard *guard,
                      CURLM *m,
                      Curl_mapi_fn fn,
@@ -311,12 +351,25 @@ bool Curl_mapi_enter(struct Curl_mapi_guard *guard,
   else if(!fn_props->recurse && multi->callstack.count) {
 #ifdef CURLVERBOSE
       DEBUGF(curl_mfprintf(stderr,
-        "MAPI guard: calling %u with call to %u ongoing\n", (uint16_t)fn,
+        "MAPI guard: calling %hu with call to %u ongoing\n", (uint16_t)fn,
         multi->callstack.calls[multi->callstack.count-1]));
 #endif
     mresult = CURLM_RECURSIVE_API_CALL;
     goto out;
   }
+
+#if defined(USE_SSL) && defined(USE_MUTEX)
+  if(fn_props->no_scache_lock && multi->ssl_scache &&
+     Curl_ssl_scache_is_locked_by_current_thread(multi->admin)) {
+#ifdef CURLVERBOSE
+      DEBUGF(curl_mfprintf(stderr,
+        "MAPI guard: calling %hu while its vtls_scache is locked by "
+        "current thread\n", (uint16_t)fn));
+#endif
+    mresult = CURLM_RECURSIVE_API_CALL;
+    goto out;
+  }
+#endif
 
   /* all fine, add to data's callstack */
   if(multi->callstack.count >= CURL_MAPI_MAX_RECURSION) {

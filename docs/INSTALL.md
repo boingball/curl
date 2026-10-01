@@ -146,8 +146,8 @@ Building statically is not for the faint of heart.
 
 ## Debug
 
-If you are a curl developer and use gcc, you might want to enable more debug
-options with the `--enable-debug` option.
+If you are a curl developer and use gcc, you might want to enable curl debug
+features (for developing curl) with the `--enable-debug` option.
 
 curl can be built to use a whole range of libraries to provide various useful
 services, and configure tries to auto-detect a decent default. If you want to
@@ -224,8 +224,8 @@ Building for Windows Vista/Server 2008 is required as a minimum.
 
 You can build curl with:
 
-- Microsoft Visual Studio 2010 v10.0 or later (`_MSC_VER >= 1600`)
-- MinGW-w64 3.0 or later (`__MINGW64_VERSION_MAJOR >= 3`)
+- Microsoft Visual Studio 2010 10.0 or greater (`_MSC_VER >= 1600`)
+- mingw-w64 3.0 or greater (`__MINGW64_VERSION_MAJOR >= 3`)
 
 ## Building Windows DLLs and C runtime (CRT) linkage issues
 
@@ -352,7 +352,7 @@ cmake . \
 
 Notes:
 
-- Requires DJGPP 2.04 or upper.
+- Requires DJGPP 2.04 or greater.
 
 - Compile Watt-32 (and OpenSSL) with the same version of DJGPP. Otherwise
   things go wrong because things like FS-extensions and `errno` values have

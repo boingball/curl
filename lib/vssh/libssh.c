@@ -45,7 +45,6 @@
 #include "urldata.h"
 #include "sendf.h"
 #include "curl_trc.h"
-#include "hostip.h"
 #include "progress.h"
 #include "transfer.h"
 #include "vssh/ssh.h"
@@ -110,10 +109,10 @@ static CURLcode sftp_error_to_CURLE(int err)
 }
 
 /* Multiple options:
- * 1. data->set.str[STRING_SSH_HOST_PUBLIC_KEY_SHA256] is set with a SHA256
- *    hash.
- * 2. data->set.str[STRING_SSH_HOST_PUBLIC_KEY_MD5] is set with an MD5
- *    hash (90s style auth, not sure we should have it here)
+ * 1. CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_SHA256) is set
+ *    with a SHA256 hash.
+ * 2. CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_MD5) is set
+ *    with an MD5 hash (90s style auth, not sure we should have it here)
  * 3. data->set.ssh_keyfunc callback is set. Then we do trust on first
  *    use. We even save on knownhosts if CURLKHSTAT_FINE_ADD_TO_FILE
  *    is returned by it.
@@ -144,9 +143,9 @@ static int myssh_is_known(struct Curl_easy *data, struct ssh_conn *sshc)
   if(rc != SSH_OK)
     return rc;
 
-  if(data->set.str[STRING_SSH_HOST_PUBLIC_KEY_SHA256]) {
+  if(CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_SHA256)) {
     const char *pubkey_sha256 =
-      data->set.str[STRING_SSH_HOST_PUBLIC_KEY_SHA256];
+      CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_SHA256);
     char *fingerprint_b64 = NULL;
     size_t fingerprint_b64_len;
     size_t pub_pos = 0;
@@ -198,8 +197,9 @@ static int myssh_is_known(struct Curl_easy *data, struct ssh_conn *sshc)
     goto cleanup;
   }
 
-  if(data->set.str[STRING_SSH_HOST_PUBLIC_KEY_MD5]) {
-    const char *pubkey_md5 = data->set.str[STRING_SSH_HOST_PUBLIC_KEY_MD5];
+  if(CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_MD5)) {
+    const char *pubkey_md5 =
+      CURL_EASY_STR(data, STRING_SSH_HOST_PUBLIC_KEY_MD5);
     char md5buffer[33];
     int i;
 
@@ -228,7 +228,7 @@ static int myssh_is_known(struct Curl_easy *data, struct ssh_conn *sshc)
     goto cleanup;
   }
 
-  if(data->set.str[STRING_SSH_KNOWNHOSTS]) {
+  if(CURL_EASY_STR(data, STRING_SSH_KNOWNHOSTS)) {
 
     /* Get the known_key from the known hosts file */
     vstate = ssh_session_get_known_hosts_entry(sshc->ssh_session,
@@ -1761,7 +1761,7 @@ static int myssh_in_SFTP_QUOTE_STAT(struct Curl_easy *data,
   return SSH_NO_ERROR;
 }
 
-static void conn_forget_socket(struct Curl_easy *data, int sockindex)
+static void conn_forget_socket(struct Curl_easy *data, int8_t sockindex)
 {
   struct connectdata *conn = data->conn;
   if(conn && CONN_SOCK_IDX_VALID(sockindex)) {
@@ -2238,7 +2238,7 @@ static CURLcode myssh_in_SESSION_FREE(struct Curl_easy *data,
   /* the code we are about to return */
   result = sshc->actualcode;
   memset(sshc, 0, sizeof(struct ssh_conn));
-  connclose(data->conn, "SSH session free");
+  connclose(data->conn);
   sshc->state = SSH_SESSION_FREE;   /* current */
   sshc->nextstate = SSH_NO_STATE;
   myssh_to(data, sshc, SSH_STOP);
@@ -2619,15 +2619,16 @@ static CURLcode myssh_connect(struct Curl_easy *data, bool *done)
     }
   }
 
-  if(data->set.str[STRING_SSH_KNOWNHOSTS]) {
-    infof(data, "Known hosts: %s", data->set.str[STRING_SSH_KNOWNHOSTS]);
+  if(CURL_EASY_STR(data, STRING_SSH_KNOWNHOSTS)) {
+    infof(data, "Known hosts: %s",
+          CURL_EASY_STR(data, STRING_SSH_KNOWNHOSTS));
     rc = ssh_options_set(sshc->ssh_session, SSH_OPTIONS_KNOWNHOSTS,
-                         data->set.str[STRING_SSH_KNOWNHOSTS]);
+                         CURL_EASY_STR(data, STRING_SSH_KNOWNHOSTS));
     if(rc == SSH_OK)
       /* libssh has two separate options for this. Set both to the same file
          to avoid surprises */
       rc = ssh_options_set(sshc->ssh_session, SSH_OPTIONS_GLOBAL_KNOWNHOSTS,
-                           data->set.str[STRING_SSH_KNOWNHOSTS]);
+                           CURL_EASY_STR(data, STRING_SSH_KNOWNHOSTS));
     if(rc != SSH_OK) {
       failf(data, "Could not set known hosts file path");
       return CURLE_FAILED_INIT;
@@ -2779,7 +2780,7 @@ static CURLcode scp_done(struct Curl_easy *data, CURLcode status,
   return myssh_done(data, sshc, status);
 }
 
-static CURLcode scp_send(struct Curl_easy *data, int sockindex,
+static CURLcode scp_send(struct Curl_easy *data, int8_t sockindex,
                          const uint8_t *mem, size_t len, bool eos,
                          size_t *pnwritten)
 {
@@ -2813,7 +2814,7 @@ static CURLcode scp_send(struct Curl_easy *data, int sockindex,
   return CURLE_OK;
 }
 
-static CURLcode scp_recv(struct Curl_easy *data, int sockindex,
+static CURLcode scp_recv(struct Curl_easy *data, int8_t sockindex,
                          char *mem, size_t len, size_t *pnread)
 {
   struct connectdata *conn = data->conn;
@@ -2939,7 +2940,7 @@ static CURLcode sftp_done(struct Curl_easy *data, CURLcode status,
 }
 
 /* return number of sent bytes */
-static CURLcode sftp_send(struct Curl_easy *data, int sockindex,
+static CURLcode sftp_send(struct Curl_easy *data, int8_t sockindex,
                           const uint8_t *mem, size_t len, bool eos,
                           size_t *pnwritten)
 {
@@ -3020,7 +3021,7 @@ static CURLcode sftp_send(struct Curl_easy *data, int sockindex,
  * Return number of received (decrypted) bytes
  * or <0 on error
  */
-static CURLcode sftp_recv(struct Curl_easy *data, int sockindex,
+static CURLcode sftp_recv(struct Curl_easy *data, int8_t sockindex,
                           char *mem, size_t len, size_t *pnread)
 {
   struct connectdata *conn = data->conn;

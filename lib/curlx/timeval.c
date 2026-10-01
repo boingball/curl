@@ -25,8 +25,6 @@
 
 #ifdef _WIN32
 
-#include "system_win32.h"
-
 static LARGE_INTEGER s_time_freq;
 
 /* For tool or tests, we must initialize before calling curlx_now().
@@ -214,6 +212,11 @@ timediff_t curlx_timediff_ceil_ms(struct curltime newer,
   else if(diff <= (TIMEDIFF_T_MIN / 1000))
     return TIMEDIFF_T_MIN;
   return (diff * 1000) + ((newer.tv_usec - older.tv_usec + 999) / 1000);
+}
+
+timediff_t curlx_us_to_ceil_ms(timediff_t us)
+{
+  return (us / 1000) + ((us > 0) && (us % 1000));
 }
 
 /*

@@ -19,12 +19,6 @@ document](https://curl.se/docs/knownbugs.html) are subject for fixing.
 
 # libcurl
 
-## Consult `%APPDATA%` also for `.netrc`
-
-`%APPDATA%\.netrc` is not considered when running on Windows. Should it not?
-
-See [curl issue 4016](https://github.com/curl/curl/issues/4016)
-
 ## `struct lifreq`
 
 Use `struct lifreq` and `SIOCGLIFADDR` instead of `struct ifreq` and
@@ -444,13 +438,6 @@ use text frames.
 An abandoned attempt to add support for this exists in [PR
 22093](https://github.com/curl/curl/pull/22093).
 
-# FILE
-
-## Directory listing on non-POSIX
-
-Listing the contents of a directory accessed with FILE only works on platforms
-with `opendir()`. Support could be added for more systems, like Windows.
-
 # TLS
 
 ## `TLS-PSK` with OpenSSL
@@ -484,20 +471,6 @@ For TLS 1.2, the binding type is usually `tls-unique`, and for TLS 1.3 it is
 By changing the order of TLS extensions provided in the TLS handshake, it is
 sometimes possible to circumvent TLS fingerprinting by servers. The TLS
 extension order is of course not the only way to fingerprint a client.
-
-## Consider OCSP stapling by default
-
-Treat a negative response a reason for aborting the connection. Since OCSP
-stapling is presumed to get used much less in the future when Let's Encrypt
-drops the OCSP support, the benefit of this might however be limited.
-
-[curl issue 15483](https://github.com/curl/curl/issues/15483)
-
-## Provide callback for cert verification
-
-OpenSSL supports a callback for customized verification of the peer
-certificate, but this does not seem to be exposed in the libcurl APIs. Could
-it be? There is so much that could be done if it were.
 
 ## Less memory massaging with Schannel
 
@@ -577,6 +550,10 @@ extra processing overhead.
 The feature matrix at https://curl.se/libcurl/c/tls-options.html shows which
 features are supported by which TLS backends, and thus also where there are
 feature gaps.
+
+## ECH for QUIC
+
+curl's support for ECH is currently limited to TCP only.
 
 # Proxy
 
@@ -725,10 +702,10 @@ RFC 6266 documents how UTF-8 names can be passed to a client in the
 
 [curl issue 1888](https://github.com/curl/curl/issues/1888)
 
-## Option to make `-Z` merge lined based outputs on stdout
+## Option to make `-Z` merge line-based outputs on stdout
 
-When a user requests multiple lined based files using `-Z` and sends them to
-stdout, curl does not *merge* and send complete lines fine but may send
+When a user requests multiple line-based files using `-Z` and sends them to
+stdout, curl does not *merge* and send complete lines but may send
 partial lines from several sources.
 
 [curl issue 5175](https://github.com/curl/curl/issues/5175)
@@ -985,8 +962,6 @@ See [curl issue 4477](https://github.com/curl/curl/issues/4477)
 
 The rate-limiting logic is done in the PERFORMING state in multi.c but MQTT is
 not (yet) implemented to use that.
-
-## Support MQTTS
 
 ## Handle network blocks
 
