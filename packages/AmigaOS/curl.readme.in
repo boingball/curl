@@ -22,7 +22,7 @@ This AmigaOS build supports the following protocols:
   tftp ws wss
 
 Main features include alt-svc, HSTS, HTTPS proxy support, compression through
-zlib, NTLM, SSL/TLS, TLS-SRP and thread-safe operation.
+zlib, SSL/TLS and thread-safe operation.
 
 System requirements
 -------------------
@@ -86,7 +86,16 @@ Release notes
 
 @VERSION@ - @BUILD_DATE@
 
-  - Updated to the corresponding upstream curl source revision
+  - Updated to curl 8.22.0 upstream source
+  - Official release superseding the July development build
+  - Corrected embedded curl and libcurl version reporting
+  - Built using GCC 13.2, clib2 and soft-float (no FPU)
+  - Tested HTTP, HTTPS/TLS, redirects and binary downloads
+  - Includes five CPU-optimised executable and library variants
+
+8.22.0-DEV - 2026-07-21
+
+  - Updated to the current upstream curl development snapshot
   - Built with the known-good GCC 13.2 AmigaOS toolchain
   - Added dedicated 68030 executable and static library builds
   - Includes 68000, 68020, 68030, 68040 and 68060 targets
