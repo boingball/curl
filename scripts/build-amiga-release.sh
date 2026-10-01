@@ -50,7 +50,7 @@ Options:
   --quiet-make      Use compact make output
 
 Environment:
-  RELEASE_VERSION   Optional package version (e.g. 8.22.0), validated against source
+  RELEASE_VERSION   Matching stable version; also sets compiled curl/libcurl version
   -h, --help        Show this help
 EOF_USAGE
 }
@@ -131,7 +131,32 @@ GIT_DIRTY=no
 git -C "$ROOT_DIR" diff --quiet --ignore-submodules HEAD -- 2>/dev/null || GIT_DIRTY=yes
 COMPILER_VERSION="$("$CC" --version | sed -n '1p')"
 
-note "AmigaOS curl release build: $VERSION (${CPUS[*]})"
+note "AmigaOS curl release build: $RELEASE_VERSION (source: $VERSION; ${CPUS[*]})"
+# The upstream release tag can retain a -DEV string in curlver.h. For an
+# explicit matching stable release, substitute that one definition only while
+# compiling and always put the original bytes back (success, failure, Ctrl-C).
+# Keep the tracked upstream header untouched between releases.
+VERSION_HEADER="$ROOT_DIR/include/curl/curlver.h"
+if [[ "$RELEASE_VERSION" != "$VERSION" ]]; then
+  ((CLEAN_FIRST)) || die "stable RELEASE_VERSION requires a clean build; omit CLEAN_BUILD=0"
+  git -C "$ROOT_DIR" diff --quiet -- include/curl/curlver.h ||
+    die "curlver.h has local changes; refusing a temporary version override"
+  HEADER_BACKUP="$(mktemp)"
+  cp -p -- "$VERSION_HEADER" "$HEADER_BACKUP"
+  restore_version_header() {
+    if [[ -n "${HEADER_BACKUP:-}" && -f "$HEADER_BACKUP" ]]; then
+      cp -p -- "$HEADER_BACKUP" "$VERSION_HEADER"
+      rm -f -- "$HEADER_BACKUP"
+    fi
+  }
+  trap restore_version_header EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # Match only the full LIBCURL_VERSION definition; verify the result below.
+  sed -i "s|^#define LIBCURL_VERSION \"$VERSION\"$|#define LIBCURL_VERSION \"$RELEASE_VERSION\"|" "$VERSION_HEADER"
+  grep -Fqx "#define LIBCURL_VERSION \"$RELEASE_VERSION\"" "$VERSION_HEADER" ||
+    die "could not apply temporary curlver.h version override"
+fi
 if ((REGENERATE)); then
   (cd "$ROOT_DIR" && autoreconf -fi)
   ! grep -Rqs 'curl_rtmp.c' "$ROOT_DIR/lib/Makefile.in" "$ROOT_DIR/lib/Makefile.inc" || die "stale curl_rtmp.c reference"
@@ -144,7 +169,8 @@ mkdir -p -- "$STAGE_DIR/docs"
 cat >"$STAGE_DIR/BUILD-INFO.txt" <<EOF_INFO
 curl for AmigaOS build information
 ==================================
-curl version:       $VERSION
+Upstream version:   $VERSION
+Compiled version:   $RELEASE_VERSION
 Package version:    $RELEASE_VERSION
 Git branch:         $GIT_BRANCH
 Git commit:         $GIT_COMMIT
