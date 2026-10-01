@@ -48,6 +48,9 @@ Options:
   --strip           Strip staged curl executables
   --clean-only      Remove build and dist directories
   --quiet-make      Use compact make output
+
+Environment:
+  RELEASE_VERSION   Optional package version (e.g. 8.22.0), validated against source
   -h, --help        Show this help
 EOF_USAGE
 }
@@ -109,7 +112,13 @@ for command in autoreconf make awk sed sha256sum tar git file tee; do require "$
 
 VERSION="$(awk '$1=="#define" && $2=="LIBCURL_VERSION" {gsub(/"/,"",$3); print $3; exit}' "$ROOT_DIR/include/curl/curlver.h")"
 [[ -n "$VERSION" ]] || die "could not determine curl version"
-SAFE_VERSION="${VERSION//[^A-Za-z0-9._-]/_}"
+# Official stable packaging may drop -DEV if its numeric version matches the
+# underlying source; never permit a different or arbitrary release number.
+RELEASE_VERSION="${RELEASE_VERSION:-$VERSION}"
+[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-DEV)?$ ]] || die "invalid RELEASE_VERSION: $RELEASE_VERSION"
+[[ "$RELEASE_VERSION" == "$VERSION" || ( "$VERSION" == "${RELEASE_VERSION}-DEV" && "$RELEASE_VERSION" != *-DEV ) ]] ||
+  die "RELEASE_VERSION $RELEASE_VERSION does not match source version $VERSION"
+SAFE_VERSION="${RELEASE_VERSION//[^A-Za-z0-9._-]/_}"
 RELEASE_NAME="curl-${SAFE_VERSION}-amigaos"
 STAGE_DIR="$DIST_ROOT/$RELEASE_NAME"
 ARCHIVE="$DIST_ROOT/$RELEASE_NAME.tar.gz"
@@ -136,6 +145,7 @@ cat >"$STAGE_DIR/BUILD-INFO.txt" <<EOF_INFO
 curl for AmigaOS build information
 ==================================
 curl version:       $VERSION
+Package version:    $RELEASE_VERSION
 Git branch:         $GIT_BRANCH
 Git commit:         $GIT_COMMIT
 Working tree dirty: $GIT_DIRTY
